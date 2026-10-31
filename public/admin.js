@@ -83,7 +83,7 @@
     shell(`
       <section class="adm-card">
         <h2>Добавить ники</h2>
-        <p class="muted-text">По одному в строке: <code>ник | данные для выдачи</code>. Несколько строк данных в одной записи разделяй через <code>;;</code>. Данные можно не указывать: ник попадёт в каталог, а данные ты впишешь, когда придёт заказ.</p>
+        <p class="muted-text">По одному в строке: <code>ник | данные для выдачи</code>. Несколько строк данных в одной записи разделяй через <code>;;</code>. Данные можно не указывать: ник попадёт в каталог, а данные ты впишешь, когда придёт заказ. Третьим полем можно сразу дать ссылку на лот FunPay: <code>ник | данные | https://funpay.com/...</code> (без данных: <code>ник || ссылка</code>).</p>
         <form id="addForm" novalidate>
           <div class="adm-row2">
             <div class="field"><label for="aCat">Категория</label>
@@ -91,7 +91,7 @@
             <div class="field"><label for="aPrice">Цена, $</label><input id="aPrice" type="text" inputmode="numeric" value="30" autocomplete="off"></div>
           </div>
           <div class="field"><label for="aLines">Ники</label>
-            <textarea id="aLines" rows="5" spellcheck="false" placeholder="abcd | login: mail@x.com;;pass: 12345&#10;efgh   ← можно без данных, впишешь при заказе"></textarea></div>
+            <textarea id="aLines" rows="5" spellcheck="false" placeholder="abcd | login: mail@x.com;;pass: 12345 | https://funpay.com/lots/offer?id=123&#10;efgh   ← можно без данных и без ссылки"></textarea></div>
           <button class="btn btn--primary" type="submit">Добавить в сток</button>
         </form>
       </section>
@@ -100,10 +100,11 @@
         <div class="adm-head"><h2>Сток <span class="muted-text">${list.length}</span></h2>
           <div class="tabs" id="flt">${[['all', 'Все'], ['4l', '4L'], ['4c', '4C']].map(([k, l]) => `<button type="button" class="chip" data-f="${k}" aria-pressed="${state.filter === k}">${l}</button>`).join('')}</div></div>
         <div class="adm-table">${list.length ? list.map(i => `
-          <div class="adm-line" data-id="${i.id}">
+          <div class="adm-line adm-line--s" data-id="${i.id}">
             <span class="adm-nick"><span class="at">@</span>${esc(i.h)}</span>
             <span class="tag">${i.cat.toUpperCase()}</span>
             <input class="adm-price" type="text" inputmode="numeric" value="${i.price}" aria-label="Цена @${esc(i.h)}">
+            <input class="adm-fp" type="text" spellcheck="false" autocomplete="off" value="${esc(i.fp)}" placeholder="лот FunPay (https://funpay.com/...)" aria-label="Ссылка на лот FunPay @${esc(i.h)}">
             <span class="status status--${i.status === 'sold' ? 'delivered' : i.status === 'reserved' ? 'pending' : ''}">${STATUS[i.status]}</span>
             ${i.secret ? `<details class="adm-det"><summary>данные</summary><pre>${esc(i.secret)}</pre></details>` : '<span class="tag tag--warn">нет данных</span>'}
             <button class="btn btn--sm" type="button" data-del="${i.id}" ${i.status !== 'free' ? 'disabled' : ''}>Удалить</button>
@@ -119,6 +120,11 @@
       } catch (ex) { toast(ex.code === 'validation' ? 'Проверь цену (целое число) и категорию.' : 'Ошибка. Попробуй ещё раз.'); }
     });
     $('#flt').addEventListener('click', e => { const b = e.target.closest('[data-f]'); if (b) { state.filter = b.dataset.f; loadStock(); } });
+    $$('.adm-fp').forEach(inp => inp.addEventListener('change', async () => {
+      const id = inp.closest('.adm-line').dataset.id;
+      try { await api('/admin/stock/' + id, 'POST', { fp: inp.value }); toast(inp.value.trim() ? 'Ссылка на лот сохранена' : 'Ссылка убрана'); }
+      catch { toast('Нужна ссылка вида https://funpay.com/...'); loadStock(); }
+    }));
     $$('.adm-price').forEach(inp => inp.addEventListener('change', async () => {
       const id = inp.closest('.adm-line').dataset.id;
       try { await api('/admin/stock/' + id, 'POST', { price: Number(inp.value) }); toast('Цена сохранена'); }
@@ -143,12 +149,12 @@
         <div class="adm-order-top">
           <strong>${esc(o.id)}</strong><span>${esc(o.username)}</span>
           <span class="adm-items">${itemsOf(o)}</span>
-          <span>${money(o.total)} · ${esc(o.method.toUpperCase())}</span>
+          <span>${money(o.total)} · ${esc(o.method.toUpperCase())}${o.ref ? ' · №' + esc(o.ref) : ''}</span>
           <span class="status status--${o.status}">${ORDER_S[o.status]}</span><small class="muted-text">${fmt(o.claimedAt || o.createdAt)}</small>
         </div>
         ${open ? `<div class="adm-deliver">
           ${o.items.map(i => `<div class="adm-dl">
-            <label><span class="at">@</span>${esc(i.h)} <button class="btn btn--sm" type="button" data-copy="${esc(i.h)}">копировать ник</button></label>
+            <label><span class="at">@</span>${esc(i.h)} <button class="btn btn--sm" type="button" data-copy="${esc(i.h)}">копировать ник</button>${/^https:\/\//.test(i.fp) ? ` <a class="btn btn--sm" href="${esc(i.fp)}" target="_blank" rel="noopener noreferrer">лот FunPay</a>` : ''}</label>
             <textarea rows="2" spellcheck="false" data-dl="${i.id}" placeholder="данные выдачи: login: ...;;pass: ...">${esc(i.secret.replace(/\n/g, ';;'))}</textarea></div>`).join('')}
           <div class="adm-actions">
             <button class="btn btn--primary btn--sm" type="button" data-ok="${esc(o.id)}">Деньги пришли — выдать</button>

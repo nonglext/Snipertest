@@ -222,9 +222,9 @@ function takenIds(exceptUser) {
   return set;
 }
 function orderView(o, withData) {
-  const items = o.items.map(id => { const s = getStock(id); return { id, h: s.h, price: s.price, cat: s.cat, ...(withData && o.status === 'delivered' ? { data: s.secret } : {}) }; });
+  const items = o.items.map(id => { const s = getStock(id); return { id, h: s.h, price: s.price, cat: s.cat, ...(o.method === 'funpay' && s.fp ? { fp: s.fp } : {}), ...(withData && o.status === 'delivered' ? { data: s.secret } : {}) }; });
   return {
-    id: o.id, status: o.status, method: o.method, total: o.total, address: o.address,
+    id: o.id, status: o.status, method: o.method, total: o.total, address: o.address, ref: o.ref || '',
     createdAt: o.createdAt, expiresAt: o.expiresAt, items, testMode: PAYMENT_MODE === 'test'
   };
 }
@@ -253,6 +253,13 @@ function markPaid(order, adminName) {
 
 /* ---------- API ---------- */
 const NAME_RE = /^[A-Za-z0-9_]{3,20}$/;
+// ссылка на лот FunPay: только https и только funpay.com. Пустая строка = убрать ссылку, null = неверная
+function fpUrl(v) {
+  const x = String(v == null ? '' : v).trim();
+  if (!x) return '';
+  if (x.length > 300) return null;
+  try { const u = new URL(x); return u.protocol === 'https:' && (u.hostname === 'funpay.com' || u.hostname.endsWith('.funpay.com')) ? u.href : null; } catch { return null; }
+}
 
 /* ---------- админы: ADMINS="ник1:пароль1,ник2:пароль2" (в Environment на Render) ----------
    Аккаунты создаются при старте, эти ники в обычной регистрации заняты. */
@@ -291,7 +298,7 @@ function adminApi(req, res, url, body, adminName) {
   const route = req.method + ' ' + url.pathname;
 
   if (route === 'GET /api/admin/stock') {
-    const items = db.stock.filter(x => !x.removed).map(x => ({ id: x.id, h: x.h, price: x.price, cat: x.cat, secret: x.secret, status: stockStatus(x.id) }));
+    const items = db.stock.filter(x => !x.removed).map(x => ({ id: x.id, h: x.h, price: x.price, cat: x.cat, secret: x.secret, fp: x.fp || '', status: stockStatus(x.id) }));
     const delivered = db.orders.filter(o => o.status === 'delivered');
     return send(res, 200, {
       items,
@@ -313,11 +320,14 @@ function adminApi(req, res, url, body, adminName) {
     const added = [], skipped = [];
     for (const line of lines) {
       const i = line.indexOf('|');
-      const h = (i < 0 ? line : line.slice(0, i)).trim().toLowerCase(), secret = i < 0 ? '' : line.slice(i + 1).trim();
+      const h = (i < 0 ? line : line.slice(0, i)).trim().toLowerCase();
+      let secret = i < 0 ? '' : line.slice(i + 1).trim(), fp = '';
+      const lm = secret.match(/(?:^|\|)\s*(https:\/\/[^\s|]+)\s*$/);          // «ник | данные | ссылка на лот FunPay»
+      if (lm) { fp = fpUrl(lm[1]); secret = secret.slice(0, lm.index).trim(); if (fp === null) { skipped.push(h + ' (ссылка не FunPay)'); continue; } }
       if (!/^[a-z0-9_.]{2,32}$/.test(h) || secret.length > 500) { skipped.push(h || line.slice(0, 20) + ' (формат)'); continue; }
       if (have.has(h)) { skipped.push(h + ' (уже есть)'); continue; }
       have.add(h);
-      db.stock.push({ id: nextStockId(), h, price, cat, secret: secret.replace(/\s*;;\s*/g, '\n') });
+      db.stock.push({ id: nextStockId(), h, price, cat, secret: secret.replace(/\s*;;\s*/g, '\n'), ...(fp ? { fp } : {}) });
       added.push(h);
     }
     save(); pushAll({ t: 'catalog' });
@@ -335,6 +345,7 @@ function adminApi(req, res, url, body, adminName) {
     }
     if (body.price !== undefined) { const pr = Number(body.price); if (!Number.isInteger(pr) || pr < 1 || pr > 100000) return fail(res, 400, 'price', 'validation'); item.price = pr; }
     if (body.cat !== undefined) { if (!['4l', '4c'].includes(body.cat)) return fail(res, 400, 'cat', 'validation'); item.cat = body.cat; }
+    if (body.fp !== undefined) { const f = fpUrl(body.fp); if (f === null) return fail(res, 400, 'fp', 'validation_fp'); if (f) item.fp = f; else delete item.fp; }
     if (body.secret !== undefined) { const sc = String(body.secret).trim(); if (!sc || sc.length > 500) return fail(res, 400, 'secret', 'validation'); item.secret = sc; }
     save(); pushAll({ t: 'catalog' });
     return send(res, 200, { ok: true });
@@ -343,9 +354,9 @@ function adminApi(req, res, url, body, adminName) {
   if (route === 'GET /api/admin/orders') {
     expireOrders();
     const list = db.orders.slice().sort((a, b) => b.createdAt - a.createdAt).slice(0, 200).map(o => ({
-      id: o.id, status: o.status, total: o.total, method: o.method, createdAt: o.createdAt, claimedAt: o.claimedAt, address: o.address,
+      id: o.id, status: o.status, total: o.total, method: o.method, createdAt: o.createdAt, claimedAt: o.claimedAt, address: o.address, ref: o.ref || '',
       username: (db.users.find(u => u.id === o.userId) || {}).username || '?',
-      items: o.items.map(id => { const x = getStock(id) || {}; return { id, h: x.h || '?', secret: x.secret || '' }; })
+      items: o.items.map(id => { const x = getStock(id) || {}; return { id, h: x.h || '?', secret: x.secret || '', fp: x.fp || '' }; })
     }));
     return send(res, 200, { orders: list });
   }
@@ -416,7 +427,7 @@ async function api(req, res, url) {
 
   if (route === 'GET /api/items') {
     const me = userOf(req), taken = takenIds(me && me.id);
-    return send(res, 200, { items: db.stock.filter(s => !s.removed && !taken.has(s.id)).map(({ id, h, price, cat }) => ({ id, h, price, cat })) });
+    return send(res, 200, { items: db.stock.filter(s => !s.removed && !taken.has(s.id)).map(({ id, h, price, cat, fp }) => ({ id, h, price, cat, fp: !!fp })) });
   }
 
   if (route === 'GET /api/me') {
@@ -460,17 +471,18 @@ async function api(req, res, url) {
   if (route === 'POST /api/orders') {
     if (limited(ip, 'order', 20, 3600e3)) return fail(res, 429, 'too many', 'rate');
     const ids = Array.isArray(body.items) ? [...new Set(body.items.map(Number))] : [];
-    const method = ['usdt', 'ton'].includes(body.method) ? body.method : null;
+    const method = ['usdt', 'ton', 'funpay'].includes(body.method) ? body.method : null;
     if (!ids.length || ids.length > 10 || !method || ids.some(id => !getStock(id) || getStock(id).removed)) return fail(res, 400, 'bad order', 'validation');
     // свои прошлые неоплаченные заказы отменяем, чтобы не держать бронь
     db.orders.forEach(o => { if (o.userId === user.id && o.status === 'pending') { o.status = 'expired'; pushOrder(o); } });
+    if (method === 'funpay' && ids.some(id => !getStock(id).fp)) return fail(res, 400, 'нет лота FunPay', 'nofunpay');
     const taken = takenIds(user.id);
     if (ids.some(id => taken.has(id))) { save(); return fail(res, 409, 'unavailable', 'unavailable'); }
     const order = {
       id: 'SN-' + rid(3).toUpperCase(), userId: user.id, items: ids, method,
       total: ids.reduce((s, id) => s + getStock(id).price, 0),
-      address: 'TEST-' + rid(10),            // в live сюда ляжет адрес из шлюза/кошелька
-      status: 'pending', createdAt: now(), expiresAt: now() + ORDER_TTL
+      address: method === 'funpay' ? '' : 'TEST-' + rid(10),            // в live сюда ляжет адрес из шлюза/кошелька
+      status: 'pending', createdAt: now(), expiresAt: now() + (method === 'funpay' ? ORDER_TTL * 2 : ORDER_TTL)
     };
     db.orders.push(order); save();
     pushAll({ t: 'catalog' }); pushAdmins({ t: 'orders' });
@@ -522,12 +534,18 @@ async function api(req, res, url) {
     }
   }
 
-  const m = url.pathname.match(/^\/api\/orders\/(SN-[0-9A-F]{6})(\/fake-pay)?$/);
+  const m = url.pathname.match(/^\/api\/orders\/(SN-[0-9A-F]{6})(\/fake-pay|\/claim)?$/);
   if (m) {
     expireOrders();
     const order = db.orders.find(o => o.id === m[1] && o.userId === user.id);   // чужие заказы не видны
     if (!order) return fail(res, 404, 'not found', 'notfound');
     if (req.method === 'GET' && !m[2]) return send(res, 200, { order: orderView(order, true) });
+    if (req.method === 'POST' && m[2] === '/claim') {         // «я оплатил на FunPay» → заявка админу (работает и вне test-режима)
+      if (order.method !== 'funpay') return fail(res, 404, 'not found', 'notfound');
+      if (order.status !== 'pending' && order.status !== 'review') return fail(res, 409, 'bad status', 'status');
+      if (order.status === 'pending') order.ref = String(body.ref || '').trim().slice(0, 40);
+      return send(res, 200, { order: orderView(markReview(order), true) });
+    }
     if (req.method === 'POST' && m[2]) {
       if (PAYMENT_MODE !== 'test') return fail(res, 404, 'not found', 'notfound');
       if (order.status !== 'pending' && order.status !== 'review' && order.status !== 'delivered') return fail(res, 409, 'bad status', 'status');

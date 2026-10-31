@@ -18,7 +18,8 @@
 
   const PAYMENT_METHODS = [
     { id: 'usdt', key: 'pay.usdt', sub: 'TRC-20 / ERC-20' },
-    { id: 'ton',  key: 'pay.ton',  sub: 'Toncoin' }
+    { id: 'ton',  key: 'pay.ton',  sub: 'Toncoin' },
+    { id: 'funpay', key: 'pay.funpay', sub: '', icon: 'funpay.svg', fp: true }     // доступен, только если у всех ников в заказе есть лот
   ];
 
   /* ---------- 3. ТЕКСТ ---------- */
@@ -83,7 +84,9 @@
       'co.errContact': 'Введите Telegram-ник или email.',
       'co.errTerms': 'Примите условия, чтобы продолжить.',
       'co.errSend': 'Не удалось отправить заказ. Попробуйте ещё раз.',
-      'pay.usdt': 'USDT', 'pay.ton': 'TON',
+      'pay.usdt': 'USDT', 'pay.ton': 'TON', 'pay.funpay': 'FunPay',
+      'pay.fpHint': 'Откройте лот, оплатите его на FunPay и подтвердите заказ там. Потом вернитесь сюда и нажмите «Я оплатил». Админ проверит оплату и выдаст данные.',
+      'pay.fpRef': 'Номер заказа на FunPay (необязательно)', 'pay.fpDone': 'Я оплатил на FunPay', 'pay.fpOpen': 'Открыть лот',
       'ok.title': 'Заказ выдан', 'ok.text': 'Заказ {id} оплачен.', 'ok.close': 'В каталог',
       'contact.title': 'Нужен другой ник?', 'contact.text': 'Напишите, какой ник ищете, и мы постараемся найти.',
       'contact.tg': 'Telegram', 'contact.mail': 'Email'
@@ -148,7 +151,9 @@
       'co.errContact': 'Enter a Telegram username or an email.',
       'co.errTerms': 'Please accept the terms to continue.',
       'co.errSend': 'Could not send the order. Please try again.',
-      'pay.usdt': 'USDT', 'pay.ton': 'TON',
+      'pay.usdt': 'USDT', 'pay.ton': 'TON', 'pay.funpay': 'FunPay',
+      'pay.fpHint': 'Open the listing, pay for it on FunPay and confirm the order there. Then come back here and press “I paid”. The admin will check the payment and send your details.',
+      'pay.fpRef': 'FunPay order number (optional)', 'pay.fpDone': 'I paid on FunPay', 'pay.fpOpen': 'Open listing',
       'ok.title': 'Order delivered', 'ok.text': 'Order {id} is paid.', 'ok.close': 'Back to catalog',
       'contact.title': 'Need a different username?', 'contact.text': 'Tell us what you are looking for and we will try to find it.',
       'contact.tg': 'Telegram', 'contact.mail': 'Email'
@@ -514,11 +519,13 @@
   }
 
   function renderPayMethods() {
-    const cur = ($('input[name="method"]:checked') || {}).value || PAYMENT_METHODS[0].id;
-    $('#payGrid').innerHTML = PAYMENT_METHODS.map(m => `
+    const list = PAYMENT_METHODS.filter(m => !m.fp || (state.checkout && state.checkout.items.length && state.checkout.items.every(i => i.fp)));
+    const checked = ($('input[name="method"]:checked') || {}).value;
+    const cur = list.some(m => m.id === checked) ? checked : list[0].id;
+    $('#payGrid').innerHTML = list.map(m => `
       <label class="pay-opt">
         <input type="radio" name="method" value="${m.id}" ${m.id === cur ? 'checked' : ''}>
-        <span>${t(m.key)}</span><small>${m.sub}</small>
+        ${m.icon ? `<img class="pay-ico" src="${m.icon}" alt="" width="22" height="22">` : ''}<span>${t(m.key)}</span>${m.sub ? `<small>${m.sub}</small>` : ''}
       </label>`).join('');
   }
 
@@ -564,11 +571,16 @@
         <span class="line-price">${money.format(i.price)}</span></li>`).join('')}</ul>
       <div class="pay-info">
         <div><small>${t('pay.amount')}</small><strong>${money.format(order.total)} · ${esc(t(method.key || 'pay.usdt'))}</strong></div>
-        <div><small>${t('pay.address')}</small><code>${esc(order.address)}</code></div>
+        ${order.method === 'funpay' ? '' : `<div><small>${t('pay.address')}</small><code>${esc(order.address)}</code></div>`}
       </div>
+      ${order.method === 'funpay' && !expired && !review ? `
+        <div class="fp-links">${order.items.filter(i => /^https:\/\//.test(i.fp || '')).map(i =>
+          `<a class="btn btn--sm" href="${esc(i.fp)}" target="_blank" rel="noopener noreferrer"><img class="pay-ico" src="funpay.svg" alt="" width="18" height="18"> ${t('pay.fpOpen')} · @${esc(i.h)}</a>`).join('')}</div>
+        <p class="pay-note">${t('pay.fpHint')}</p>
+        <div class="field"><label for="fpRef">${t('pay.fpRef')}</label><input id="fpRef" type="text" maxlength="40" autocomplete="off"></div>` : ''}
       <p class="pay-status">${order.status === 'rejected' ? t('pay.rejected') : expired ? t('pay.expired') : review ? t('pay.review') : t('pay.waiting') + ' · ' + t('pay.left', { m: left })}</p>
       ${review ? '' : expired ? `<button class="btn auth-submit" type="button" data-close>${t('pay.back')}</button>` : `
-        ${order.testMode ? `<p class="pay-note">${t('pay.testNote')}</p>
+        ${order.method === 'funpay' ? `<button class="btn btn--primary auth-submit" type="button" id="fpPaidBtn">${t('pay.fpDone')}</button>` : order.testMode ? `<p class="pay-note">${t('pay.testNote')}</p>
         <button class="btn btn--primary auth-submit" type="button" id="fakePayBtn">${t('pay.fake')}</button>` : ''}`}`;
 
     const fake = $('#fakePayBtn');
@@ -576,6 +588,14 @@
       fake.disabled = true;
       try { onOrderUpdate((await api('/orders/' + order.id + '/fake-pay', 'POST', {})).order); }
       catch { fake.disabled = false; toast(t('co.errSend')); }
+    });
+
+    const paid = $('#fpPaidBtn');
+    if (paid) paid.addEventListener('click', async () => {
+      if (paid.disabled) return;                       // защита от двойного клика
+      paid.disabled = true;
+      try { onOrderUpdate((await api('/orders/' + order.id + '/claim', 'POST', { ref: ($('#fpRef') || {}).value || '' })).order); }
+      catch { paid.disabled = false; toast(t('co.errSend')); }
     });
 
     stopPoll();
