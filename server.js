@@ -19,22 +19,59 @@ const PUBLIC = path.join(__dirname, 'public');
 const stockFile = fs.existsSync(path.join(__dirname, 'stock.json')) ? 'stock.json' : 'stock.example.json';
 const SEED = JSON.parse(fs.readFileSync(path.join(__dirname, stockFile), 'utf8'));
 
-/* ---------- мини-БД ---------- */
+/* ---------- БД: Postgres (если задан DATABASE_URL) или JSON-файл ---------- */
+const DATABASE_URL = process.env.DATABASE_URL || '';
+(async function main() {
 fs.mkdirSync(DATA_DIR, { recursive: true });
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 let db = { users: [], sessions: [], orders: [], stock: null, tickets: [] };
-try { db = { ...db, ...JSON.parse(fs.readFileSync(DB_FILE, 'utf8')) }; } catch { /* первый запуск */ }
+let pool = null;
+const readFileDb = () => { try { return JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); } catch { return null; } };
+
+if (DATABASE_URL) {
+  const { Pool } = require('pg');
+  const local = /@(localhost|127\.0\.0\.1)[:/]/.test(DATABASE_URL);
+  pool = new Pool({ connectionString: DATABASE_URL, max: 3, ssl: (local || process.env.PGSSL === 'off') ? false : { rejectUnauthorized: false } });
+  pool.on('error', e => console.error('pg:', e.message));
+  await pool.query('CREATE TABLE IF NOT EXISTS app_state (id INT PRIMARY KEY, data JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT now())');
+  const r = await pool.query('SELECT data FROM app_state WHERE id = 1');
+  if (r.rows[0]) db = { ...db, ...r.rows[0].data };
+  else { const old = readFileDb(); if (old) { db = { ...db, ...old }; console.log('данные из db.json перенесены в Postgres'); } }
+} else {
+  const old = readFileDb(); if (old) db = { ...db, ...old };     // иначе первый запуск
+}
+
+const PG_UPSERT = 'INSERT INTO app_state (id, data) VALUES (1, $1) ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = now()';
+let pgDirty = false, pgBusy = false;
+async function pgFlush() {                      // записи идут по очереди; пока пишем, новые изменения копятся и уходят следующим заходом
+  if (pgBusy) return;
+  pgBusy = true;
+  try {
+    while (pgDirty) { pgDirty = false; await pool.query(PG_UPSERT, [JSON.stringify(db)]); }
+    pgBusy = false;
+  } catch (e) {
+    console.error('pg save:', e.message);
+    pgDirty = true;
+    setTimeout(() => { pgBusy = false; pgFlush(); }, 2000).unref();   // повторим через 2 с
+  }
+}
 function save() {
+  if (pool) { pgDirty = true; pgFlush(); return; }
   const tmp = DB_FILE + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(db));
   fs.renameSync(tmp, DB_FILE);
 }
+async function shutdown() {                     // Render шлёт SIGTERM при деплое — дописываем последнее состояние
+  try { if (pool) await pool.query(PG_UPSERT, [JSON.stringify(db)]); } catch (e) { console.error('pg final save:', e.message); }
+  process.exit(0);
+}
+process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
 
 // склад хранится в БД и правится из админки; стартовые позиции берутся из stock.json (или примера) один раз
 if (!Array.isArray(db.stock)) { db.stock = SEED.map(x => ({ ...x })); save(); }
 const getStock = id => db.stock.find(x => x.id === id);
 const nextStockId = () => db.stock.reduce((m, x) => Math.max(m, x.id), 0) + 1;
-console.log(`склад: ${db.stock.filter(x => !x.removed).length} позиций, оплата: ${PAYMENT_MODE}`);
+console.log(`склад: ${db.stock.filter(x => !x.removed).length} позиций, оплата: ${PAYMENT_MODE}, хранилище: ${pool ? 'Postgres' : 'файл'}`);
 
 /* ---------- хелперы ---------- */
 const sha = s => crypto.createHash('sha256').update(s).digest('hex');
@@ -531,3 +568,4 @@ const server = http.createServer(async (req, res) => {
 server.on('upgrade', wsUpgrade);
 setInterval(expireOrders, 30000).unref();    // истёкшие брони → пуш клиентам
 server.listen(PORT, () => console.log('http://localhost:' + PORT));
+})().catch(e => { console.error('Не удалось запустить:', e.message); process.exit(1); });
