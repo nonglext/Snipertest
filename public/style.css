@@ -395,7 +395,11 @@ dialog::backdrop { background: rgb(0 0 0 / .78); -webkit-backdrop-filter: blur(4
 .order-items .line-handle { font-size: 1.05rem; }
 .status { font-size: .78rem; font-weight: 600; color: var(--muted); }
 .status--delivered, .status--paid { color: var(--blue-hi); }
-.status--expired { color: var(--faint); }
+.status--expired, .status--rejected { color: var(--faint); }
+.status--review { color: #f5b942; }
+.adm-line--review { border-color: rgba(245,185,66,.45); }
+.adm-actions { display: flex; gap: 8px; }
+.adm-badge { display: inline-block; margin-left: 6px; padding: 0 7px; border-radius: 999px; background: #f5b942; color: #111; font-size: 12px; font-weight: 700; }
 .order-data { margin-top: 10px; }
 .order-data summary { cursor: pointer; font-size: .86rem; font-weight: 500; color: var(--blue-hi); }
 .data-box { margin-top: 8px; padding: 10px 12px; border: 1px solid var(--line-hi); border-radius: var(--r); background: var(--bg); }

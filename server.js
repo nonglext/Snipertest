@@ -104,7 +104,7 @@ function takenIds(exceptUser) {
   expireOrders();
   const set = new Set();
   for (const o of db.orders) {
-    if (o.status === 'paid' || o.status === 'delivered' || (o.status === 'pending' && o.userId !== exceptUser)) o.items.forEach(i => set.add(i));
+    if (o.status === 'paid' || o.status === 'delivered' || o.status === 'review' || (o.status === 'pending' && o.userId !== exceptUser)) o.items.forEach(i => set.add(i));
   }
   return set;
 }
@@ -116,12 +116,22 @@ function orderView(o, withData) {
   };
 }
 
-// ЕДИНСТВЕННОЕ место, где заказ становится оплаченным и выдаётся.
-// Позже его же вызывает webhook шлюза или воркер блокчейна. Идемпотентно.
-function markPaid(order) {
+// Клиент нажал «я оплатил» (в тесте это фейк-кнопка): заказ уходит админу на проверку, данные НЕ выдаются.
+// Позже тут можно автоматически вызывать markPaid из webhook шлюза.
+function markReview(order) {
   if (order.status !== 'pending') return order;
+  order.status = 'review'; order.claimedAt = now();
+  save();
+  return order;
+}
+
+// ЕДИНСТВЕННОЕ место, где заказ становится оплаченным и выдаётся. Вызывает админ после проверки поступления
+// (или webhook шлюза). Идемпотентно.
+function markPaid(order, adminName) {
+  if (order.status !== 'pending' && order.status !== 'review') return order;
   order.status = 'paid'; order.paidAt = now();
   order.status = 'delivered'; order.deliveredAt = now();
+  if (adminName) order.confirmedBy = adminName;
   save();
   return order;
 }
@@ -157,12 +167,12 @@ function stockStatus(id) {
   let st = 'free';
   for (const o of db.orders) if (o.items.includes(id)) {
     if (o.status === 'paid' || o.status === 'delivered') return 'sold';
-    if (o.status === 'pending') st = 'reserved';
+    if (o.status === 'pending' || o.status === 'review') st = 'reserved';
   }
   return st;
 }
 
-function adminApi(req, res, url, body) {
+function adminApi(req, res, url, body, adminName) {
   const route = req.method + ' ' + url.pathname;
 
   if (route === 'GET /api/admin/stock') {
@@ -174,7 +184,8 @@ function adminApi(req, res, url, body) {
         free: items.filter(x => x.status === 'free').length, sold: items.filter(x => x.status === 'sold').length,
         revenue: delivered.reduce((a, o) => a + o.total, 0), orders: delivered.length,
         users: db.users.filter(u => !isAdmin(u)).length,
-        openTickets: db.tickets.filter(t => t.status === 'open').length
+        openTickets: db.tickets.filter(t => t.status === 'open').length,
+        review: db.orders.filter(o => o.status === 'review').length
       }
     });
   }
@@ -217,11 +228,27 @@ function adminApi(req, res, url, body) {
   if (route === 'GET /api/admin/orders') {
     expireOrders();
     const list = db.orders.slice().sort((a, b) => b.createdAt - a.createdAt).slice(0, 200).map(o => ({
-      id: o.id, status: o.status, total: o.total, method: o.method, createdAt: o.createdAt,
+      id: o.id, status: o.status, total: o.total, method: o.method, createdAt: o.createdAt, claimedAt: o.claimedAt, address: o.address,
       username: (db.users.find(u => u.id === o.userId) || {}).username || '?',
       items: o.items.map(id => (getStock(id) || {}).h || '?')
     }));
     return send(res, 200, { orders: list });
+  }
+
+  const om = url.pathname.match(/^\/api\/admin\/orders\/(SN-[0-9A-F]{6})\/(confirm|reject)$/);
+  if (om && req.method === 'POST') {
+    expireOrders();
+    const order = db.orders.find(o => o.id === om[1]);
+    if (!order) return fail(res, 404, 'not found', 'notfound');
+    if (om[2] === 'confirm') {
+      if (order.status === 'delivered') return send(res, 200, { ok: true, status: order.status });
+      if (order.status !== 'review' && order.status !== 'pending') return fail(res, 409, 'bad status', 'status');
+      markPaid(order, adminName);
+    } else {
+      if (order.status !== 'review' && order.status !== 'pending') return fail(res, 409, 'bad status', 'status');
+      order.status = 'rejected'; order.rejectedAt = now(); order.rejectedBy = adminName; save();
+    }
+    return send(res, 200, { ok: true, status: order.status });
   }
 
   if (route === 'GET /api/admin/tickets') {
@@ -328,7 +355,7 @@ async function api(req, res, url) {
 
   if (url.pathname.startsWith('/api/admin/')) {
     if (!isAdmin(user)) return fail(res, 403, 'forbidden', 'forbidden');
-    return adminApi(req, res, url, body);
+    return adminApi(req, res, url, body, user.username);
   }
 
   /* поддержка */
@@ -367,8 +394,8 @@ async function api(req, res, url) {
     if (req.method === 'GET' && !m[2]) return send(res, 200, { order: orderView(order, true) });
     if (req.method === 'POST' && m[2]) {
       if (PAYMENT_MODE !== 'test') return fail(res, 404, 'not found', 'notfound');
-      if (order.status !== 'pending' && order.status !== 'delivered') return fail(res, 409, 'bad status', 'status');
-      return send(res, 200, { order: orderView(markPaid(order), true) });
+      if (order.status !== 'pending' && order.status !== 'review' && order.status !== 'delivered') return fail(res, 409, 'bad status', 'status');
+      return send(res, 200, { order: orderView(markReview(order), true) });
     }
   }
 

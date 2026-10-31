@@ -66,10 +66,12 @@
       'prof.title': 'Профиль', 'prof.logout': 'Выйти',
       'auth.password2': 'Повторите пароль', 'auth.errPass2': 'Пароли не совпадают.', 'auth.errRate': 'Слишком много попыток. Подождите немного.',
       'ord.title': 'Мои заказы', 'ord.empty': 'Заказов пока нет.', 'ord.show': 'Показать данные',
-      'ord.s.pending': 'Ждём оплату', 'ord.s.paid': 'Оплачен', 'ord.s.delivered': 'Выдан', 'ord.s.expired': 'Время вышло',
+      'ord.s.pending': 'Ждём оплату', 'ord.s.paid': 'Оплачен', 'ord.s.delivered': 'Выдан', 'ord.s.expired': 'Время вышло', 'ord.s.review': 'На проверке', 'ord.s.rejected': 'Отклонён',
       'pay.order': 'Заказ {id}', 'pay.amount': 'Сумма', 'pay.address': 'Адрес для оплаты', 'pay.left': 'Осталось {m} мин',
       'pay.waiting': 'Ждём оплату…', 'pay.expired': 'Время на оплату вышло. Оформите заказ заново.', 'pay.back': 'Закрыть',
       'pay.fake': 'Симулировать оплату (тест)', 'pay.testNote': 'Тестовый режим: деньги не списываются.',
+      'pay.review': 'Заявка отправлена админу. Он проверит поступление денег и подтвердит заказ — данные появятся здесь автоматически. Окно можно не закрывать.',
+      'pay.rejected': 'Админ не нашёл оплату по этому заказу. Если вы платили — напишите в поддержку, указав номер заказа.',
       'co.gone': 'Этот ник уже занят. Каталог обновлён.', 'ok.paid': 'Оплата прошла. Данные ника ниже, они же в «Профиль → Мои заказы».',
 
       'co.title': 'Оформление', 'co.summary': 'Ваш заказ',
@@ -127,10 +129,12 @@
       'prof.title': 'Profile', 'prof.logout': 'Sign out',
       'auth.password2': 'Repeat password', 'auth.errPass2': 'Passwords do not match.', 'auth.errRate': 'Too many attempts. Please wait a bit.',
       'ord.title': 'My orders', 'ord.empty': 'No orders yet.', 'ord.show': 'Show details',
-      'ord.s.pending': 'Awaiting payment', 'ord.s.paid': 'Paid', 'ord.s.delivered': 'Delivered', 'ord.s.expired': 'Expired',
+      'ord.s.pending': 'Awaiting payment', 'ord.s.paid': 'Paid', 'ord.s.delivered': 'Delivered', 'ord.s.expired': 'Expired', 'ord.s.review': 'Under review', 'ord.s.rejected': 'Rejected',
       'pay.order': 'Order {id}', 'pay.amount': 'Amount', 'pay.address': 'Payment address', 'pay.left': '{m} min left',
       'pay.waiting': 'Waiting for payment…', 'pay.expired': 'Payment time is over. Place the order again.', 'pay.back': 'Close',
       'pay.fake': 'Simulate payment (test)', 'pay.testNote': 'Test mode: no money is charged.',
+      'pay.review': 'Request sent to the admin. They will check that the payment arrived and confirm the order — your details will appear here automatically. You can keep this window open.',
+      'pay.rejected': 'The admin could not find a payment for this order. If you paid, contact support and include the order number.',
       'co.gone': 'This username is already taken. Catalog updated.', 'ok.paid': 'Payment received. Your details are below and in Profile → My orders.',
 
       'co.title': 'Check out', 'co.summary': 'Your order',
@@ -517,6 +521,7 @@
       form.hidden = false;
       $('#coDone').hidden = true;
       $('#coPay').hidden = true;
+      delete $('#coPay').dataset.review;
       stopPoll();
       $$('.err', form).forEach(e => { e.hidden = true; });
       $$('[aria-invalid]', form).forEach(e => e.removeAttribute('aria-invalid'));
@@ -539,7 +544,8 @@
     box.hidden = false;
     const left = Math.max(0, Math.ceil((order.expiresAt - Date.now()) / 60000));
     const method = (PAYMENT_METHODS.find(m => m.id === order.method) || {});
-    const expired = order.status === 'expired';
+    const expired = order.status === 'expired' || order.status === 'rejected';
+    const review = order.status === 'review';
     box.innerHTML = `
       <h3 class="mini-title">${esc(t('pay.order', { id: order.id }))}</h3>
       <ul class="summary">${order.items.map(i => `
@@ -549,8 +555,8 @@
         <div><small>${t('pay.amount')}</small><strong>${money.format(order.total)} · ${esc(t(method.key || 'pay.usdt'))}</strong></div>
         <div><small>${t('pay.address')}</small><code>${esc(order.address)}</code></div>
       </div>
-      <p class="pay-status">${expired ? t('pay.expired') : t('pay.waiting') + ' · ' + t('pay.left', { m: left })}</p>
-      ${expired ? `<button class="btn auth-submit" type="button" data-close>${t('pay.back')}</button>` : `
+      <p class="pay-status">${order.status === 'rejected' ? t('pay.rejected') : expired ? t('pay.expired') : review ? t('pay.review') : t('pay.waiting') + ' · ' + t('pay.left', { m: left })}</p>
+      ${review ? '' : expired ? `<button class="btn auth-submit" type="button" data-close>${t('pay.back')}</button>` : `
         ${order.testMode ? `<p class="pay-note">${t('pay.testNote')}</p>
         <button class="btn btn--primary auth-submit" type="button" id="fakePayBtn">${t('pay.fake')}</button>` : ''}`}`;
 
@@ -568,8 +574,9 @@
   }
 
   function onOrderUpdate(order) {
-    if (order.status === 'delivered' || order.status === 'paid') return showDelivered(order);
-    if (order.status === 'expired') showPay(order);
+    if (order.status === 'delivered') return showDelivered(order);
+    if (order.status === 'expired' || order.status === 'rejected') { stopPoll(); showPay(order); return; }
+    if (order.status === 'review' && !$('#coPay').dataset.review) { showPay(order); $('#coPay').dataset.review = '1'; }
   }
 
   function showDelivered(order) {

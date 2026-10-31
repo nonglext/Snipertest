@@ -26,7 +26,7 @@
   }
 
   const STATUS = { free: 'в наличии', reserved: 'бронь', sold: 'продан' };
-  const ORDER_S = { pending: 'ждёт оплату', paid: 'оплачен', delivered: 'выдан', expired: 'время вышло' };
+  const ORDER_S = { pending: 'ждёт оплату', review: 'проверить оплату', paid: 'оплачен', delivered: 'выдан', expired: 'время вышло', rejected: 'отклонён' };
   const TICKET_S = { open: 'ждёт ответа', answered: 'отвечено', closed: 'закрыто' };
 
   /* ---------- вход ---------- */
@@ -50,7 +50,7 @@
     app.innerHTML = `
       <div class="adm-top"><h1>Админ-панель</h1>
         <div class="tabs" id="admTabs" role="group">
-          ${[['stock', 'Сток'], ['orders', 'Заказы'], ['support', 'Поддержка' + (s && s.openTickets ? ' ' + s.openTickets : '')]]
+          ${[['stock', 'Сток'], ['orders', 'Заказы' + (s && s.review ? '<span class="adm-badge">' + s.review + '</span>' : '')], ['support', 'Поддержка' + (s && s.openTickets ? ' ' + s.openTickets : '')]]
             .map(([k, l]) => `<button type="button" class="chip" data-tab="${k}" aria-pressed="${state.tab === k}">${l}</button>`).join('')}
         </div></div>
       ${s ? `<div class="adm-stats">
@@ -123,13 +123,31 @@
   async function loadOrders() {
     const [{ orders }, st] = await Promise.all([api('/admin/orders'), api('/admin/stock')]);
     state.stats = st.stats;
-    shell(`<section class="adm-card"><h2>Последние заказы</h2><div class="adm-table">${orders.length ? orders.map(o => `
-      <div class="adm-line adm-line--o">
+    const row = o => `
+      <div class="adm-line adm-line--o ${o.status === 'review' ? 'adm-line--review' : ''}">
         <strong>${esc(o.id)}</strong><span>${esc(o.username)}</span>
         <span class="adm-items">${o.items.map(h => '<span class="at">@</span>' + esc(h)).join(', ')}</span>
         <span>${money(o.total)} · ${esc(o.method.toUpperCase())}</span>
-        <span class="status status--${o.status}">${ORDER_S[o.status]}</span><small class="muted-text">${fmt(o.createdAt)}</small>
-      </div>`).join('') : '<p class="muted-text">Заказов пока нет.</p>'}</div></section>`);
+        <span class="status status--${o.status}">${ORDER_S[o.status]}</span><small class="muted-text">${fmt(o.claimedAt || o.createdAt)}</small>
+        ${o.status === 'review' || o.status === 'pending' ? `<span class="adm-actions">
+          <button class="btn btn--primary btn--sm" type="button" data-ok="${esc(o.id)}">Деньги пришли — выдать</button>
+          <button class="btn btn--sm" type="button" data-no="${esc(o.id)}">Отклонить</button></span>` : ''}
+      </div>`;
+    const review = orders.filter(o => o.status === 'review'), rest = orders.filter(o => o.status !== 'review');
+    shell(`
+      <section class="adm-card"><h2>Ждут проверки оплаты <span class="muted-text">${review.length}</span></h2>
+        <p class="muted-text">Клиент нажал «оплатил». Проверь, что деньги пришли, и подтверди — только тогда он получит данные.</p>
+        <div class="adm-table">${review.length ? review.map(row).join('') : '<p class="muted-text">Новых заявок нет.</p>'}</div></section>
+      <section class="adm-card"><h2>Все заказы</h2><div class="adm-table">${rest.length ? rest.map(row).join('') : '<p class="muted-text">Заказов пока нет.</p>'}</div></section>`);
+    const act = (attr, path, ask) => $$('[' + attr + ']').forEach(b => b.addEventListener('click', async () => {
+      if (!confirm(ask)) return;
+      b.disabled = true;
+      try { await api('/admin/orders/' + b.getAttribute(attr) + '/' + path, 'POST', {}); toast(path === 'confirm' ? 'Заказ выдан клиенту' : 'Заказ отклонён'); }
+      catch { toast('Не получилось (статус уже изменился?)'); }
+      loadOrders();
+    }));
+    act('data-ok', 'confirm', 'Деньги точно пришли? Клиент сразу получит данные.');
+    act('data-no', 'reject', 'Отклонить заказ? Ники вернутся в каталог.');
   }
 
   /* ---------- поддержка ---------- */
@@ -181,6 +199,22 @@
     if (!me.admin) { app.innerHTML = '<div class="adm-card adm-login"><h2>Нет доступа</h2><p class="muted-text">У этого аккаунта нет прав администратора.</p><a class="btn" href="/">На сайт</a></div>'; return; }
     load();
   }
+
+  /* ---------- уведомление о новых заказах ---------- */
+  let lastReview = null;
+  setInterval(async () => {
+    if (document.hidden && lastReview === null) return;
+    try {
+      const { stats } = await api('/admin/stock');
+      state.stats = stats;
+      if (lastReview !== null && stats.review > lastReview) {
+        toast('Новый заказ ждёт проверки оплаты: ' + stats.review);
+        if (state.tab === 'orders') load();
+      }
+      lastReview = stats.review;
+      document.title = (stats.review ? '(' + stats.review + ') ' : '') + 'Sniper | админ-панель';
+    } catch { /* не залогинен — игнор */ }
+  }, 8000);
 
   init();
 })();
