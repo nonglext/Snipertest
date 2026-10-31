@@ -91,6 +91,7 @@
         </div>
         <div class="contact-links">
           <a class="btn btn--primary" id="tgLink" href="https://t.me/your_support" target="_blank" rel="noopener" data-i18n="contact.tg">Telegram</a>
+          <button class="btn" id="supportBtn" type="button" data-i18n="sup.write">Написать на сайте</button>
           <a class="btn" id="mailLink" href="mailto:hello@example.com" data-i18n="contact.mail">Email</a>
         </div>
       </div>
@@ -186,6 +187,10 @@
       </div>
       <h3 class="mini-title" data-i18n="ord.title">Мои заказы</h3>
       <div class="orders" id="profOrders"></div>
+      <div class="prof-actions">
+        <button class="btn" type="button" id="supportOpen" data-i18n="sup.open">Поддержка</button>
+        <a class="btn" id="adminLink" href="/admin.html" hidden data-i18n="adm.link">Админ-панель</a>
+      </div>
       <button class="btn auth-submit" type="button" id="logoutBtn" data-i18n="prof.logout">Выйти</button>
     </div>
   </div>
@@ -234,6 +239,19 @@
       <div class="orders" id="coDelivery"></div>
       <button class="btn btn--primary" type="button" data-close data-i18n="ok.close">В каталог</button>
     </div>
+  </div>
+</dialog>
+
+<!-- Поддержка -->
+<dialog id="supportDlg" class="modal" aria-labelledby="supTitle">
+  <div class="dlg">
+    <header class="dlg-head">
+      <h2 id="supTitle" data-i18n="sup.title">Поддержка</h2>
+      <button class="close" type="button" data-close data-i18n-aria="common.close" aria-label="Закрыть">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </header>
+    <div class="dlg-body" id="supBody"></div>
   </div>
 </dialog>
 

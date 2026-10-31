@@ -57,6 +57,12 @@
       'auth.welcome': 'Добро пожаловать, {u}',
       'auth.back': 'С возвращением, {u}',
       'auth.out': 'Вы вышли из аккаунта',
+      'sup.title': 'Поддержка', 'sup.write': 'Написать на сайте', 'sup.open': 'Поддержка', 'adm.link': 'Админ-панель',
+      'sup.new': 'Новое обращение', 'sup.subject': 'Тема', 'sup.message': 'Сообщение', 'sup.send': 'Отправить', 'sup.back': 'Назад',
+      'sup.empty': 'Обращений пока нет.', 'sup.reply': 'Ответить', 'sup.you': 'Вы', 'sup.admin': 'Поддержка',
+      'sup.s.open': 'Ждёт ответа', 'sup.s.answered': 'Есть ответ', 'sup.s.closed': 'Закрыто',
+      'sup.errForm': 'Тема от 3 символов, сообщение не пустое (до 2000).', 'sup.errLimit': 'Слишком много открытых обращений.', 'sup.errSend': 'Не отправилось. Попробуйте ещё раз.',
+      'sup.sent': 'Обращение отправлено',
       'prof.title': 'Профиль', 'prof.logout': 'Выйти',
       'auth.password2': 'Повторите пароль', 'auth.errPass2': 'Пароли не совпадают.', 'auth.errRate': 'Слишком много попыток. Подождите немного.',
       'ord.title': 'Мои заказы', 'ord.empty': 'Заказов пока нет.', 'ord.show': 'Показать данные',
@@ -112,6 +118,12 @@
       'auth.welcome': 'Welcome, {u}',
       'auth.back': 'Welcome back, {u}',
       'auth.out': 'Signed out',
+      'sup.title': 'Support', 'sup.write': 'Write on the site', 'sup.open': 'Support', 'adm.link': 'Admin panel',
+      'sup.new': 'New request', 'sup.subject': 'Subject', 'sup.message': 'Message', 'sup.send': 'Send', 'sup.back': 'Back',
+      'sup.empty': 'No requests yet.', 'sup.reply': 'Reply', 'sup.you': 'You', 'sup.admin': 'Support',
+      'sup.s.open': 'Awaiting reply', 'sup.s.answered': 'Answered', 'sup.s.closed': 'Closed',
+      'sup.errForm': 'Subject 3+ characters, message not empty (max 2000).', 'sup.errLimit': 'Too many open requests.', 'sup.errSend': 'Could not send. Please try again.',
+      'sup.sent': 'Request sent',
       'prof.title': 'Profile', 'prof.logout': 'Sign out',
       'auth.password2': 'Repeat password', 'auth.errPass2': 'Passwords do not match.', 'auth.errRate': 'Too many attempts. Please wait a bit.',
       'ord.title': 'My orders', 'ord.empty': 'No orders yet.', 'ord.show': 'Show details',
@@ -455,6 +467,7 @@
     ava.style.setProperty('--c', avaColor(u.username));
     const box = $('#profOrders');
     box.innerHTML = '';
+    $('#adminLink').hidden = !u.admin;
     openDialog($('#profileDlg'));
     try {
       const { orders } = await api('/orders');
@@ -608,6 +621,86 @@
     }
   }
 
+  /* ---------- 9b. Поддержка ---------- */
+  const sup = { view: 'list', id: null, timer: null };
+  const stopSupTimer = () => { clearInterval(sup.timer); sup.timer = null; };
+  const fmtTime = ts => { const d = new Date(ts); return pad(d.getDate()) + '.' + pad(d.getMonth() + 1) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()); };
+
+  function openSupport() {
+    requireAuth(() => {
+      sup.view = 'list'; sup.id = null;
+      openDialog($('#supportDlg'));
+      renderSupport();
+    });
+  }
+
+  async function renderSupport() {
+    stopSupTimer();
+    const body = $('#supBody');
+    if (sup.view === 'new') return renderSupNew(body);
+    if (sup.view === 'thread') return renderSupThread(body);
+    body.innerHTML = '<p class="muted-text">…</p>';
+    try {
+      const { tickets } = await api('/tickets');
+      body.innerHTML = `<button class="btn btn--primary auth-submit" type="button" data-sup="new">${t('sup.new')}</button>
+        <div class="orders sup-list">${tickets.length ? tickets.map(k => `
+          <button class="order sup-item" type="button" data-sup-open="${esc(k.id)}">
+            <span class="order-top"><strong>${esc(k.subject)}</strong><span class="status status--${k.status === 'answered' ? 'delivered' : k.status}">${t('sup.s.' + k.status)}</span></span>
+            <small class="muted-text">${esc(k.id)} · ${fmtTime(k.updatedAt)}</small>
+          </button>`).join('') : `<p class="muted-text">${t('sup.empty')}</p>`}</div>`;
+    } catch { body.innerHTML = '<p class="muted-text">' + t('auth.errNet') + '</p>'; }
+  }
+
+  function renderSupNew(body) {
+    body.innerHTML = `<form id="supForm" novalidate>
+      <div class="field"><label for="supSubj">${t('sup.subject')}</label><input id="supSubj" type="text" maxlength="80" autocomplete="off"></div>
+      <div class="field"><label for="supMsg">${t('sup.message')}</label><textarea id="supMsg" rows="5" maxlength="2000"></textarea></div>
+      <p class="err" id="supErr" role="alert" hidden></p>
+      <div class="sup-btns"><button class="btn" type="button" data-sup="list">${t('sup.back')}</button>
+      <button class="btn btn--primary" type="submit" id="supSend">${t('sup.send')}</button></div></form>`;
+    $('#supSubj').focus();
+    $('#supForm').addEventListener('submit', async e => {
+      e.preventDefault();
+      const err = $('#supErr'), btn = $('#supSend');
+      err.hidden = true; btn.disabled = true;
+      try {
+        const { ticket } = await api('/tickets', 'POST', { subject: $('#supSubj').value, message: $('#supMsg').value });
+        toast(t('sup.sent'));
+        sup.view = 'thread'; sup.id = ticket.id; renderSupport();
+      } catch (ex) {
+        err.textContent = t(ex.code === 'validation' ? 'sup.errForm' : ex.code === 'limit' ? 'sup.errLimit' : 'sup.errSend');
+        err.hidden = false; btn.disabled = false;
+      }
+    });
+  }
+
+  async function renderSupThread(body, keepDraft) {
+    let ticket;
+    try { ticket = (await api('/tickets/' + sup.id)).ticket; } catch { body.innerHTML = '<p class="muted-text">' + t('auth.errNet') + '</p>'; return; }
+    const draft = keepDraft && $('#supText') ? $('#supText').value : '';
+    body.innerHTML = `<div class="sup-head"><button class="btn btn--sm" type="button" data-sup="list">${t('sup.back')}</button>
+      <div><strong>${esc(ticket.subject)}</strong><small class="muted-text"> ${esc(ticket.id)} · ${t('sup.s.' + ticket.status)}</small></div></div>
+      <div class="msgs" id="supMsgs">${ticket.messages.map(m => `<div class="msg msg--${m.from}"><b>${t(m.from === 'admin' ? 'sup.admin' : 'sup.you')} · ${fmtTime(m.at)}</b><p>${esc(m.text)}</p></div>`).join('')}</div>
+      <form id="supReply" novalidate><div class="field"><textarea id="supText" rows="3" maxlength="2000" aria-label="${esc(t('sup.reply'))}"></textarea></div>
+      <button class="btn btn--primary auth-submit" type="submit">${t('sup.reply')}</button></form>`;
+    $('#supText').value = draft;
+    const box = $('#supMsgs'); box.scrollTop = box.scrollHeight;
+    $('#supReply').addEventListener('submit', async e => {
+      e.preventDefault();
+      const text = $('#supText').value.trim();
+      if (!text) return;
+      try { await api('/tickets/' + sup.id + '/messages', 'POST', { text }); renderSupThread($('#supBody')); }
+      catch { toast(t('sup.errSend')); }
+    });
+    // новые ответы подтягиваем раз в 6 секунд, пока диалог открыт
+    sup.timer = setInterval(() => {
+      if (!$('#supportDlg').open || sup.view !== 'thread') return stopSupTimer();
+      if (document.activeElement && document.activeElement.id === 'supText' && $('#supText').value) return;
+      renderSupThread($('#supBody'), true);
+    }, 6000);
+  }
+
+
   /* ---------- 10. Плейсхолдер ---------- */
   function startPlaceholderTyping(input) {
     const words = ITEMS.map(i => i.h);
@@ -671,6 +764,14 @@
     });
 
     $('#checkoutDlg').addEventListener('close', stopPoll);
+    $('#supportDlg').addEventListener('close', stopSupTimer);
+    $('#supportBtn').addEventListener('click', openSupport);
+    $('#supportOpen').addEventListener('click', () => { $('#profileDlg').close(); openSupport(); });
+    $('#supportDlg').addEventListener('click', e => {
+      const go = e.target.closest('[data-sup]'), open = e.target.closest('[data-sup-open]');
+      if (go) { sup.view = go.dataset.sup; sup.id = null; renderSupport(); }
+      else if (open) { sup.view = 'thread'; sup.id = open.dataset.supOpen; renderSupport(); }
+    });
     $('#authDlg').addEventListener('close', () => { state.afterAuth = state.afterAuth && state.user ? state.afterAuth : null; });
 
     $('#coForm').addEventListener('submit', submitOrder);
