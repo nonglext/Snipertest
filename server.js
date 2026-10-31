@@ -93,11 +93,87 @@ function readJSON(req) {
   });
 }
 
+/* ---------- WebSocket (RFC 6455, без зависимостей) ----------
+   Сервер → клиент: {t:'ticket'|'order'|'orders'|'catalog'}. Клиент ничего важного не шлёт, все действия идут через обычный API. */
+const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
+const wsClients = new Set();
+const wsPerIp = new Map();
+function wsFrame(op, payload) {
+  const len = payload.length; let head;
+  if (len < 126) head = Buffer.from([0x80 | op, len]);
+  else if (len < 65536) { head = Buffer.alloc(4); head[0] = 0x80 | op; head[1] = 126; head.writeUInt16BE(len, 2); }
+  else { head = Buffer.alloc(10); head[0] = 0x80 | op; head[1] = 127; head.writeBigUInt64BE(BigInt(len), 2); }
+  return Buffer.concat([head, payload]);
+}
+function wsSend(c, obj) {
+  if (c.socket.destroyed || !c.socket.writable) return;
+  try { c.socket.write(wsFrame(1, Buffer.from(JSON.stringify(obj)))); } catch { /* сокет умер, уберёт close */ }
+}
+function wsClose(c, code) {
+  try { const b = Buffer.alloc(2); b.writeUInt16BE(code || 1000); c.socket.end(wsFrame(8, b)); } catch { /* ignore */ }
+  setTimeout(() => c.socket.destroy(), 1000).unref();
+}
+function wsParse(c, chunk) {
+  c.buf = Buffer.concat([c.buf, chunk]);
+  if (c.buf.length > 65536 * 2) return wsClose(c, 1009);
+  for (;;) {
+    const b = c.buf;
+    if (b.length < 2) return;
+    const op = b[0] & 0x0f, masked = !!(b[1] & 0x80);
+    let len = b[1] & 0x7f, off = 2;
+    if (len === 126) { if (b.length < 4) return; len = b.readUInt16BE(2); off = 4; }
+    else if (len === 127) { if (b.length < 10) return; const big = b.readBigUInt64BE(2); if (big > 65536n) return wsClose(c, 1009); len = Number(big); off = 10; }
+    if (!masked) return wsClose(c, 1002);                 // клиентские кадры обязаны быть замаскированы
+    if (len > 65536) return wsClose(c, 1009);
+    if (b.length < off + 4 + len) return;
+    const mask = b.subarray(off, off + 4), data = Buffer.from(b.subarray(off + 4, off + 4 + len));
+    for (let i = 0; i < data.length; i++) data[i] ^= mask[i & 3];
+    c.buf = b.subarray(off + 4 + len);
+    if (op === 8) return wsClose(c, 1000);
+    if (op === 9) c.socket.write(wsFrame(10, data));       // ping → pong
+    else if (op === 10) c.alive = true;                    // pong
+    // текстовые кадры от клиента игнорируем
+  }
+}
+function wsUpgrade(req, socket) {
+  const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+  const key = req.headers['sec-websocket-key'], origin = req.headers.origin;
+  let url; try { url = new URL(req.url, 'http://x'); } catch { return socket.destroy(); }
+  let okOrigin = true;
+  if (origin) { try { okOrigin = new URL(origin).host === req.headers.host; } catch { okOrigin = false; } }   // защита от чужих сайтов
+  if (url.pathname !== '/ws' || !key || String(req.headers.upgrade).toLowerCase() !== 'websocket' || !okOrigin || (wsPerIp.get(ip) || 0) >= 10) {
+    socket.write('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n'); return socket.destroy();
+  }
+  const user = userOf(req);
+  const accept = crypto.createHash('sha1').update(key + WS_GUID).digest('base64');
+  socket.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ' + accept + '\r\n\r\n');
+  socket.setNoDelay(true);
+  const c = { socket, ip, userId: user ? user.id : null, admin: isAdmin(user), buf: Buffer.alloc(0), alive: true };
+  wsClients.add(c); wsPerIp.set(ip, (wsPerIp.get(ip) || 0) + 1);
+  let gone = false;
+  const cleanup = () => { if (gone) return; gone = true; wsClients.delete(c); const n = (wsPerIp.get(ip) || 1) - 1; if (n > 0) wsPerIp.set(ip, n); else wsPerIp.delete(ip); };
+  socket.on('data', d => wsParse(c, d));
+  socket.on('close', cleanup); socket.on('error', () => { cleanup(); socket.destroy(); });
+  wsSend(c, { t: 'hello', admin: c.admin });
+}
+setInterval(() => {                                        // пинг раз в 25 с; кто не ответил — отключаем
+  for (const c of wsClients) {
+    if (!c.alive) { c.socket.destroy(); continue; }
+    c.alive = false;
+    try { c.socket.write(wsFrame(9, Buffer.alloc(0))); } catch { /* ignore */ }
+  }
+}, 25000).unref();
+const pushUser = (uid, msg) => { for (const c of wsClients) if (c.userId === uid) wsSend(c, msg); };
+const pushAdmins = msg => { for (const c of wsClients) if (c.admin) wsSend(c, msg); };
+const pushAll = msg => { for (const c of wsClients) wsSend(c, msg); };
+const pushTicket = t => { pushUser(t.userId, { t: 'ticket', ticket: ticketView(t) }); pushAdmins({ t: 'ticket', ticket: ticketView(t, true) }); };
+const pushOrder = o => pushUser(o.userId, { t: 'order', order: orderView(o, true) });
+
 /* ---------- заказы ---------- */
 function expireOrders() {
   let changed = false;
-  for (const o of db.orders) if (o.status === 'pending' && o.expiresAt <= now()) { o.status = 'expired'; changed = true; }
-  if (changed) save();
+  for (const o of db.orders) if (o.status === 'pending' && o.expiresAt <= now()) { o.status = 'expired'; changed = true; pushOrder(o); }
+  if (changed) { save(); pushAll({ t: 'catalog' }); pushAdmins({ t: 'orders' }); }
 }
 // ник занят, если есть оплаченный/выданный заказ, либо живая бронь
 function takenIds(exceptUser) {
@@ -122,6 +198,7 @@ function markReview(order) {
   if (order.status !== 'pending') return order;
   order.status = 'review'; order.claimedAt = now();
   save();
+  pushOrder(order); pushAdmins({ t: 'orders', ev: 'review', id: order.id }); pushAll({ t: 'catalog' });
   return order;
 }
 
@@ -133,6 +210,7 @@ function markPaid(order, adminName) {
   order.status = 'delivered'; order.deliveredAt = now();
   if (adminName) order.confirmedBy = adminName;
   save();
+  pushOrder(order); pushAdmins({ t: 'orders' }); pushAll({ t: 'catalog' });
   return order;
 }
 
@@ -205,7 +283,7 @@ function adminApi(req, res, url, body, adminName) {
       db.stock.push({ id: nextStockId(), h, price, cat, secret: secret.replace(/\s*;;\s*/g, '\n') });
       added.push(h);
     }
-    save();
+    save(); pushAll({ t: 'catalog' });
     return send(res, 200, { added, skipped });
   }
 
@@ -215,13 +293,13 @@ function adminApi(req, res, url, body, adminName) {
     if (!item || item.removed) return fail(res, 404, 'not found', 'notfound');
     if (sm[2]) {
       if (stockStatus(item.id) !== 'free') return fail(res, 409, 'в заказе или продан', 'busy');
-      item.removed = true; save();
+      item.removed = true; save(); pushAll({ t: 'catalog' });
       return send(res, 200, { ok: true });
     }
     if (body.price !== undefined) { const pr = Number(body.price); if (!Number.isInteger(pr) || pr < 1 || pr > 100000) return fail(res, 400, 'price', 'validation'); item.price = pr; }
     if (body.cat !== undefined) { if (!['4l', '4c'].includes(body.cat)) return fail(res, 400, 'cat', 'validation'); item.cat = body.cat; }
     if (body.secret !== undefined) { const sc = String(body.secret).trim(); if (!sc || sc.length > 500) return fail(res, 400, 'secret', 'validation'); item.secret = sc; }
-    save();
+    save(); pushAll({ t: 'catalog' });
     return send(res, 200, { ok: true });
   }
 
@@ -247,6 +325,7 @@ function adminApi(req, res, url, body, adminName) {
     } else {
       if (order.status !== 'review' && order.status !== 'pending') return fail(res, 409, 'bad status', 'status');
       order.status = 'rejected'; order.rejectedAt = now(); order.rejectedBy = adminName; save();
+      pushOrder(order); pushAdmins({ t: 'orders' }); pushAll({ t: 'catalog' });
     }
     return send(res, 200, { ok: true, status: order.status });
   }
@@ -260,13 +339,14 @@ function adminApi(req, res, url, body, adminName) {
   if (tm && req.method === 'POST') {
     const t = db.tickets.find(x => x.id === tm[1]);
     if (!t) return fail(res, 404, 'not found', 'notfound');
+    if (t.status === 'closed') return fail(res, 409, 'closed', 'closed');          // в закрытый тикет не пишем (и не переоткрываем случайно)
     if (tm[2] === 'reply') {
       const text = String(body.text || '').trim();
       if (!text || text.length > TEXT_MAX) return fail(res, 400, 'text', 'validation');
       t.messages.push({ from: 'admin', text, at: now() });
       t.status = 'answered';
     } else t.status = 'closed';
-    t.updatedAt = now(); save();
+    t.updatedAt = now(); save(); pushTicket(t);
     return send(res, 200, { ticket: ticketView(t, true) });
   }
 
@@ -334,7 +414,7 @@ async function api(req, res, url) {
     const method = ['usdt', 'ton'].includes(body.method) ? body.method : null;
     if (!ids.length || ids.length > 10 || !method || ids.some(id => !getStock(id) || getStock(id).removed)) return fail(res, 400, 'bad order', 'validation');
     // свои прошлые неоплаченные заказы отменяем, чтобы не держать бронь
-    db.orders.forEach(o => { if (o.userId === user.id && o.status === 'pending') o.status = 'expired'; });
+    db.orders.forEach(o => { if (o.userId === user.id && o.status === 'pending') { o.status = 'expired'; pushOrder(o); } });
     const taken = takenIds(user.id);
     if (ids.some(id => taken.has(id))) { save(); return fail(res, 409, 'unavailable', 'unavailable'); }
     const order = {
@@ -344,6 +424,7 @@ async function api(req, res, url) {
       status: 'pending', createdAt: now(), expiresAt: now() + ORDER_TTL
     };
     db.orders.push(order); save();
+    pushAll({ t: 'catalog' }); pushAdmins({ t: 'orders' });
     return send(res, 201, { order: orderView(order, true) });
   }
 
@@ -368,7 +449,7 @@ async function api(req, res, url) {
     if (subject.length < 3 || !text || text.length > TEXT_MAX) return fail(res, 400, 'bad ticket', 'validation');
     if (db.tickets.filter(t => t.userId === user.id && t.status !== 'closed').length >= 5) return fail(res, 409, 'limit', 'limit');
     const t = { id: 'T-' + rid(3).toUpperCase(), userId: user.id, subject, status: 'open', createdAt: now(), updatedAt: now(), messages: [{ from: 'user', text, at: now() }] };
-    db.tickets.push(t); save();
+    db.tickets.push(t); save(); pushTicket(t);
     return send(res, 201, { ticket: ticketView(t) });
   }
   const tk = url.pathname.match(/^\/api\/tickets\/(T-[0-9A-F]{6})(\/messages)?$/);
@@ -377,11 +458,17 @@ async function api(req, res, url) {
     if (!t) return fail(res, 404, 'not found', 'notfound');
     if (req.method === 'GET' && !tk[2]) return send(res, 200, { ticket: ticketView(t) });
     if (req.method === 'POST' && tk[2]) {
-      if (limited(ip, 'tmsg', 30, 3600e3)) return fail(res, 429, 'too many', 'rate');
+      if (t.status === 'closed') return fail(res, 409, 'тикет закрыт', 'closed');     // закрытый тикет: писать нельзя
+      if (limited(ip, 'tmsg', 30, 3600e3) || limited(user.id, 'tmsg-burst', 5, 30000)) return fail(res, 429, 'too many', 'rate');
       const text = String(body.text || '').trim();
       if (!text || text.length > TEXT_MAX || t.messages.length >= 200) return fail(res, 400, 'text', 'validation');
-      t.messages.push({ from: 'user', text, at: now() });
-      t.status = 'open'; t.updatedAt = now(); save();
+      const last = t.messages[t.messages.length - 1], tt = now();
+      if (last && last.from === 'user') {                                            // антиспам: пауза и защита от дубля
+        if (tt - last.at < 1500) return fail(res, 429, 'slow down', 'fast');
+        if (last.text === text && tt - last.at < 30000) return send(res, 200, { ticket: ticketView(t) });
+      }
+      t.messages.push({ from: 'user', text, at: tt });
+      t.status = 'open'; t.updatedAt = tt; save(); pushTicket(t);
       return send(res, 200, { ticket: ticketView(t) });
     }
   }
@@ -429,7 +516,8 @@ const server = http.createServer(async (req, res) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'same-origin');
-  res.setHeader('Content-Security-Policy', "default-src 'self'; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src https://fonts.gstatic.com; img-src 'self' data:; script-src 'self'; connect-src 'self'; frame-ancestors 'none'");
+  const host = /^[a-z0-9.\-:\[\]]+$/i.test(req.headers.host || '') ? req.headers.host : '';
+  res.setHeader('Content-Security-Policy', "default-src 'self'; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src https://fonts.gstatic.com; img-src 'self' data:; script-src 'self'; connect-src 'self'" + (host ? ' ws://' + host + ' wss://' + host : '') + "; frame-ancestors 'none'");
   try {
     const url = new URL(req.url, 'http://x');
     if (url.pathname.startsWith('/api/')) return await api(req, res, url);
@@ -440,4 +528,6 @@ const server = http.createServer(async (req, res) => {
     if (!res.headersSent) fail(res, 500, 'server error', 'server');
   }
 });
+server.on('upgrade', wsUpgrade);
+setInterval(expireOrders, 30000).unref();    // истёкшие брони → пуш клиентам
 server.listen(PORT, () => console.log('http://localhost:' + PORT));

@@ -45,18 +45,30 @@
   }
 
   /* ---------- каркас ---------- */
+  function tabLabels() {
+    const s = state.stats;
+    return [['stock', 'Сток'],
+      ['orders', 'Заказы' + (s && s.review ? '<span class="adm-badge">' + s.review + '</span>' : '')],
+      ['support', 'Поддержка' + (s && s.openTickets ? '<span class="adm-badge">' + s.openTickets + '</span>' : '')]];
+  }
+  function paintTabs() {
+    const box = $('#admTabs'); if (!box) return;
+    tabLabels().forEach(([k, l]) => { const b = box.querySelector('[data-tab="' + k + '"]'); if (b) b.innerHTML = l; });
+    const n = (state.stats && state.stats.review) || 0;
+    document.title = (n ? '(' + n + ') ' : '') + 'Sniper | админ-панель';
+  }
   function shell(inner) {
     const s = state.stats;
     app.innerHTML = `
       <div class="adm-top"><h1>Админ-панель</h1>
         <div class="tabs" id="admTabs" role="group">
-          ${[['stock', 'Сток'], ['orders', 'Заказы' + (s && s.review ? '<span class="adm-badge">' + s.review + '</span>' : '')], ['support', 'Поддержка' + (s && s.openTickets ? ' ' + s.openTickets : '')]]
-            .map(([k, l]) => `<button type="button" class="chip" data-tab="${k}" aria-pressed="${state.tab === k}">${l}</button>`).join('')}
+          ${tabLabels().map(([k, l]) => `<button type="button" class="chip" data-tab="${k}" aria-pressed="${state.tab === k}">${l}</button>`).join('')}
         </div></div>
       ${s ? `<div class="adm-stats">
         <div><small>В наличии</small><strong>${s.free}</strong></div><div><small>Продано</small><strong>${s.sold}</strong></div>
         <div><small>Выручка</small><strong>${money(s.revenue)}</strong></div><div><small>Покупателей</small><strong>${s.users}</strong></div></div>` : ''}
       <div id="admBody">${inner}</div>`;
+    paintTabs();
     $('#admTabs').addEventListener('click', e => {
       const b = e.target.closest('[data-tab]'); if (!b) return;
       state.tab = b.dataset.tab; state.ticket = null; load();
@@ -156,6 +168,8 @@
     state.stats = state.stats || (await api('/admin/stock')).stats;
     state.stats.openTickets = tickets.filter(t => t.status === 'open').length;
     const cur = tickets.find(t => t.id === state.ticket);
+    const draft = cur && $('#rt') && state.draftFor === cur.id ? $('#rt').value : '';
+    const hadFocus = !!(document.activeElement && document.activeElement.id === 'rt');
     shell(`<div class="adm-split">
       <section class="adm-card adm-tl"><h2>Обращения</h2>${tickets.length ? tickets.map(t => `
         <button type="button" class="adm-t ${cur && cur.id === t.id ? 'is-on' : ''}" data-t="${esc(t.id)}">
@@ -165,17 +179,25 @@
         <div class="adm-head"><div><h2>${esc(cur.subject)}</h2><small class="muted-text">${esc(cur.username)} · ${esc(cur.id)}</small></div>
           ${cur.status !== 'closed' ? '<button class="btn btn--sm" type="button" id="closeT">Закрыть</button>' : ''}</div>
         <div class="msgs">${cur.messages.map(m => `<div class="msg msg--${m.from === 'admin' ? 'user' : 'admin'}"><b>${m.from === 'admin' ? 'Вы' : esc(cur.username)} · ${fmt(m.at)}</b><p>${esc(m.text)}</p></div>`).join('')}</div>
-        <form id="rf" novalidate><div class="field"><textarea id="rt" rows="3" maxlength="2000" aria-label="Ответ"></textarea></div>
-          <button class="btn btn--primary" type="submit">Ответить</button></form>` : '<p class="muted-text">Выбери обращение слева.</p>'}</section></div>`);
+        ${cur.status === 'closed' ? '<p class="muted-text">Обращение закрыто, писать в него нельзя.</p>' : `<form id="rf" novalidate><div class="field"><textarea id="rt" rows="3" maxlength="2000" aria-label="Ответ"></textarea></div>
+          <button class="btn btn--primary" type="submit" id="rb">Ответить</button></form>`}` : '<p class="muted-text">Выбери обращение слева.</p>'}</section></div>`);
     $$('[data-t]').forEach(b => b.addEventListener('click', () => { state.ticket = b.dataset.t; loadSupport(); }));
     const rf = $('#rf');
     if (rf) {
       const box = $('.msgs'); box.scrollTop = box.scrollHeight;
-      rf.addEventListener('submit', async e => {
-        e.preventDefault();
+      state.draftFor = cur.id;
+      $('#rt').value = draft; if (hadFocus) $('#rt').focus();
+      let busy = false;
+      const send = async () => {
+        if (busy) return;                              // защита от двойной отправки
         const text = $('#rt').value.trim(); if (!text) return;
-        try { await api('/admin/tickets/' + cur.id + '/reply', 'POST', { text }); loadSupport(); } catch { toast('Не отправилось'); }
-      });
+        busy = true; $('#rb').disabled = true; $('#rt').readOnly = true;
+        try { await api('/admin/tickets/' + cur.id + '/reply', 'POST', { text }); $('#rt').value = ''; state.draftFor = null; }
+        catch (ex) { toast(ex.code === 'closed' ? 'Тикет уже закрыт' : 'Не отправилось'); }
+        busy = false; loadSupport();
+      };
+      rf.addEventListener('submit', e => { e.preventDefault(); send(); });
+      $('#rt').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (!e.repeat) send(); } });
       const c = $('#closeT');
       if (c) c.addEventListener('click', async () => { try { await api('/admin/tickets/' + cur.id + '/close', 'POST', {}); loadSupport(); } catch { toast('Ошибка'); } });
     }
@@ -197,24 +219,38 @@
     try { me = (await api('/me')).user; } catch { me = null; }
     if (!me) return renderLogin();
     if (!me.admin) { app.innerHTML = '<div class="adm-card adm-login"><h2>Нет доступа</h2><p class="muted-text">У этого аккаунта нет прав администратора.</p><a class="btn" href="/">На сайт</a></div>'; return; }
-    load();
+    wsConnect(); load();
   }
 
-  /* ---------- уведомление о новых заказах ---------- */
-  let lastReview = null;
-  setInterval(async () => {
-    if (document.hidden && lastReview === null) return;
-    try {
-      const { stats } = await api('/admin/stock');
-      state.stats = stats;
-      if (lastReview !== null && stats.review > lastReview) {
-        toast('Новый заказ ждёт проверки оплаты: ' + stats.review);
-        if (state.tab === 'orders') load();
+  /* ---------- WebSocket: заявки и сообщения приходят сразу ---------- */
+  const ws = { sock: null, open: false, retry: 0, timer: null };
+  async function refreshStats() {
+    try { const { stats } = await api('/admin/stock'); state.stats = stats; paintTabs(); } catch { /* не вошли */ }
+  }
+  function wsConnect() {
+    clearTimeout(ws.timer);
+    if (ws.sock) { ws.sock.onclose = null; try { ws.sock.close(); } catch { /* ignore */ } }
+    let sck;
+    try { sck = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws'); } catch { return; }
+    ws.sock = sck;
+    let was = ws.retry > 0;
+    sck.onopen = () => { ws.open = true; ws.retry = 0; if (was) { refreshStats(); if (state.tab !== 'stock') load(); } };
+    sck.onmessage = async e => {
+      let m; try { m = JSON.parse(e.data); } catch { return; }
+      if (m.t === 'orders') {
+        if (m.ev === 'review') toast('Новый заказ ждёт проверки оплаты');
+        if (state.tab === 'orders') await load(); else await refreshStats();
+        if (state.tab === 'orders') paintTabs();
+      } else if (m.t === 'ticket') {
+        const k = m.ticket, last = k.messages[k.messages.length - 1];
+        if (last && last.from === 'user' && !(state.tab === 'support' && state.ticket === k.id && !document.hidden)) toast('Новое сообщение в поддержке: ' + k.subject);
+        if (state.tab === 'support') await load(); else await refreshStats();
       }
-      lastReview = stats.review;
-      document.title = (stats.review ? '(' + stats.review + ') ' : '') + 'Sniper | админ-панель';
-    } catch { /* не залогинен — игнор */ }
-  }, 8000);
+    };
+    sck.onclose = () => { if (ws.sock !== sck) return; ws.open = false; ws.timer = setTimeout(wsConnect, Math.min(15000, 1000 * 2 ** ws.retry++)); };
+  }
+  // запасной вариант, пока сокет не подключён
+  setInterval(() => { if (!ws.open && state.stats) refreshStats(); }, 15000);
 
   init();
 })();

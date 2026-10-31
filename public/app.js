@@ -63,6 +63,8 @@
       'sup.s.open': 'Ждёт ответа', 'sup.s.answered': 'Есть ответ', 'sup.s.closed': 'Закрыто',
       'sup.errForm': 'Тема от 3 символов, сообщение не пустое (до 2000).', 'sup.errLimit': 'Слишком много открытых обращений.', 'sup.errSend': 'Не отправилось. Попробуйте ещё раз.',
       'sup.sent': 'Обращение отправлено',
+      'sup.closedNote': 'Обращение закрыто, писать в него больше нельзя. Если остался вопрос — создайте новое обращение.',
+      'sup.errClosed': 'Обращение закрыто.', 'sup.errFast': 'Слишком быстро. Подождите секунду.', 'sup.newReply': 'Новый ответ поддержки',
       'prof.title': 'Профиль', 'prof.logout': 'Выйти',
       'auth.password2': 'Повторите пароль', 'auth.errPass2': 'Пароли не совпадают.', 'auth.errRate': 'Слишком много попыток. Подождите немного.',
       'ord.title': 'Мои заказы', 'ord.empty': 'Заказов пока нет.', 'ord.show': 'Показать данные',
@@ -126,6 +128,8 @@
       'sup.s.open': 'Awaiting reply', 'sup.s.answered': 'Answered', 'sup.s.closed': 'Closed',
       'sup.errForm': 'Subject 3+ characters, message not empty (max 2000).', 'sup.errLimit': 'Too many open requests.', 'sup.errSend': 'Could not send. Please try again.',
       'sup.sent': 'Request sent',
+      'sup.closedNote': 'This request is closed and can no longer be replied to. If you still have a question, create a new request.',
+      'sup.errClosed': 'This request is closed.', 'sup.errFast': 'Too fast. Wait a second.', 'sup.newReply': 'New reply from support',
       'prof.title': 'Profile', 'prof.logout': 'Sign out',
       'auth.password2': 'Repeat password', 'auth.errPass2': 'Passwords do not match.', 'auth.errRate': 'Too many attempts. Please wait a bit.',
       'ord.title': 'My orders', 'ord.empty': 'No orders yet.', 'ord.show': 'Show details',
@@ -367,6 +371,7 @@
     const label = $('#userLabel');
     label.textContent = state.user ? state.user.username : t('auth.signin');
     $('#userBtn').classList.toggle('is-in', !!state.user);
+    if (ws.ready) wsEnsure();      // сменился аккаунт → переподключаем сокет под него
   }
 
   function setAuthMode(mode) {
@@ -473,6 +478,11 @@
     box.innerHTML = '';
     $('#adminLink').hidden = !u.admin;
     openDialog($('#profileDlg'));
+    loadProfileOrders();
+  }
+
+  async function loadProfileOrders() {
+    const box = $('#profOrders');
     try {
       const { orders } = await api('/orders');
       box.innerHTML = orders.length ? orders.map(orderHTML).join('') : '<p class="muted-text">' + t('ord.empty') + '</p>';
@@ -542,6 +552,7 @@
     $('#coDone').hidden = true;
     const box = $('#coPay');
     box.hidden = false;
+    state.payOrderId = order.id;
     const left = Math.max(0, Math.ceil((order.expiresAt - Date.now()) / 60000));
     const method = (PAYMENT_METHODS.find(m => m.id === order.method) || {});
     const expired = order.status === 'expired' || order.status === 'rejected';
@@ -569,6 +580,7 @@
 
     stopPoll();
     if (!expired) pollTimer = setInterval(async () => {
+      if (ws.open) return;          // сокет сам пришлёт обновление; опрос только как запасной вариант
       try { onOrderUpdate((await api('/orders/' + order.id)).order); } catch { /* повторим на следующем тике */ }
     }, 3000);
   }
@@ -629,9 +641,10 @@
   }
 
   /* ---------- 9b. Поддержка ---------- */
-  const sup = { view: 'list', id: null, timer: null };
+  const sup = { view: 'list', id: null, timer: null, sending: false, last: 0 };
   const stopSupTimer = () => { clearInterval(sup.timer); sup.timer = null; };
   const fmtTime = ts => { const d = new Date(ts); return pad(d.getDate()) + '.' + pad(d.getMonth() + 1) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()); };
+  const supOpenNow = () => $('#supportDlg').open;
 
   function openSupport() {
     requireAuth(() => {
@@ -668,45 +681,142 @@
     $('#supSubj').focus();
     $('#supForm').addEventListener('submit', async e => {
       e.preventDefault();
+      if (sup.sending) return;                         // защита от двойной отправки (Enter/клик подряд)
+      sup.sending = true;
       const err = $('#supErr'), btn = $('#supSend');
       err.hidden = true; btn.disabled = true;
       try {
         const { ticket } = await api('/tickets', 'POST', { subject: $('#supSubj').value, message: $('#supMsg').value });
         toast(t('sup.sent'));
-        sup.view = 'thread'; sup.id = ticket.id; renderSupport();
+        sup.view = 'thread'; sup.id = ticket.id; sup.sending = false; renderSupport();
       } catch (ex) {
+        sup.sending = false;
         err.textContent = t(ex.code === 'validation' ? 'sup.errForm' : ex.code === 'limit' ? 'sup.errLimit' : 'sup.errSend');
         err.hidden = false; btn.disabled = false;
       }
     });
   }
 
-  async function renderSupThread(body, keepDraft) {
+  const supMsgHTML = (m, ticket) => `<div class="msg msg--${m.from}"><b>${t(m.from === 'admin' ? 'sup.admin' : 'sup.you')} · ${fmtTime(m.at)}</b><p>${esc(m.text)}</p></div>`;
+  const supFootHTML = ticket => ticket.status === 'closed'
+    ? `<p class="muted-text sup-closed">${t('sup.closedNote')}</p><button class="btn btn--primary auth-submit" type="button" data-sup="new">${t('sup.new')}</button>`
+    : `<form id="supReply" novalidate><div class="field"><textarea id="supText" rows="3" maxlength="2000" aria-label="${esc(t('sup.reply'))}"></textarea></div>
+      <button class="btn btn--primary auth-submit" type="submit" id="supReplyBtn">${t('sup.reply')}</button></form>`;
+
+  // Рисует диалог. Если он уже открыт — обновляет только сообщения/статус, не трогая то, что человек печатает.
+  function drawThread(ticket) {
+    const body = $('#supBody');
+    const box = $('#supMsgs');
+    if (!box || body.dataset.tid !== ticket.id) {
+      body.dataset.tid = ticket.id;
+      body.innerHTML = `<div class="sup-head"><button class="btn btn--sm" type="button" data-sup="list">${t('sup.back')}</button>
+        <div><strong>${esc(ticket.subject)}</strong><small class="muted-text"> ${esc(ticket.id)} · <span id="supStat">${t('sup.s.' + ticket.status)}</span></small></div></div>
+        <div class="msgs" id="supMsgs">${ticket.messages.map(m => supMsgHTML(m, ticket)).join('')}</div>
+        <div id="supFoot" data-closed="${ticket.status === 'closed' ? 1 : 0}">${supFootHTML(ticket)}</div>`;
+      const mb = $('#supMsgs'); mb.scrollTop = mb.scrollHeight;
+      bindSupReply();
+      return;
+    }
+    const nearEnd = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+    box.innerHTML = ticket.messages.map(m => supMsgHTML(m, ticket)).join('');
+    if (nearEnd) box.scrollTop = box.scrollHeight;
+    $('#supStat').textContent = t('sup.s.' + ticket.status);
+    const foot = $('#supFoot'), closed = ticket.status === 'closed' ? '1' : '0';
+    if (foot.dataset.closed !== closed) {               // тикет закрыли (или переоткрыли) — меняем форму на заглушку
+      foot.dataset.closed = closed; foot.innerHTML = supFootHTML(ticket); bindSupReply();
+    }
+  }
+
+  async function sendSupReply() {
+    const ta = $('#supText'); if (!ta || sup.sending) return;
+    const text = ta.value.trim(); if (!text) return;
+    if (Date.now() - sup.last < 1500) return;           // не чаще раза в 1,5 с
+    sup.sending = true; sup.last = Date.now();
+    ta.readOnly = true; const btn = $('#supReplyBtn'); if (btn) btn.disabled = true;
+    try {
+      const { ticket } = await api('/tickets/' + sup.id + '/messages', 'POST', { text });
+      const cur = $('#supText'); if (cur && cur.value.trim() === text) cur.value = '';
+      drawThread(ticket);
+    } catch (ex) {
+      toast(t(ex.code === 'closed' ? 'sup.errClosed' : ex.code === 'fast' || ex.code === 'rate' ? 'sup.errFast' : 'sup.errSend'));
+      if (ex.code === 'closed') { try { drawThread((await api('/tickets/' + sup.id)).ticket); } catch { /* ignore */ } }
+    } finally {
+      sup.sending = false;
+      const cur = $('#supText'); if (cur) { cur.readOnly = false; cur.focus(); }
+      const b2 = $('#supReplyBtn'); if (b2) b2.disabled = false;
+    }
+  }
+
+  function bindSupReply() {
+    const form = $('#supReply'); if (!form) return;
+    form.addEventListener('submit', e => { e.preventDefault(); sendSupReply(); });
+    $('#supText').addEventListener('keydown', e => {      // Enter — отправить, Shift+Enter — новая строка
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (!e.repeat) sendSupReply(); }
+    });
+  }
+
+  async function renderSupThread(body) {
+    delete body.dataset.tid;
     let ticket;
     try { ticket = (await api('/tickets/' + sup.id)).ticket; } catch { body.innerHTML = '<p class="muted-text">' + t('auth.errNet') + '</p>'; return; }
-    const draft = keepDraft && $('#supText') ? $('#supText').value : '';
-    body.innerHTML = `<div class="sup-head"><button class="btn btn--sm" type="button" data-sup="list">${t('sup.back')}</button>
-      <div><strong>${esc(ticket.subject)}</strong><small class="muted-text"> ${esc(ticket.id)} · ${t('sup.s.' + ticket.status)}</small></div></div>
-      <div class="msgs" id="supMsgs">${ticket.messages.map(m => `<div class="msg msg--${m.from}"><b>${t(m.from === 'admin' ? 'sup.admin' : 'sup.you')} · ${fmtTime(m.at)}</b><p>${esc(m.text)}</p></div>`).join('')}</div>
-      <form id="supReply" novalidate><div class="field"><textarea id="supText" rows="3" maxlength="2000" aria-label="${esc(t('sup.reply'))}"></textarea></div>
-      <button class="btn btn--primary auth-submit" type="submit">${t('sup.reply')}</button></form>`;
-    $('#supText').value = draft;
-    const box = $('#supMsgs'); box.scrollTop = box.scrollHeight;
-    $('#supReply').addEventListener('submit', async e => {
-      e.preventDefault();
-      const text = $('#supText').value.trim();
-      if (!text) return;
-      try { await api('/tickets/' + sup.id + '/messages', 'POST', { text }); renderSupThread($('#supBody')); }
-      catch { toast(t('sup.errSend')); }
-    });
-    // новые ответы подтягиваем раз в 6 секунд, пока диалог открыт
-    sup.timer = setInterval(() => {
-      if (!$('#supportDlg').open || sup.view !== 'thread') return stopSupTimer();
-      if (document.activeElement && document.activeElement.id === 'supText' && $('#supText').value) return;
-      renderSupThread($('#supBody'), true);
+    drawThread(ticket);
+    // запасной вариант: если сокет не подключён — подтягиваем ответы раз в 6 секунд
+    sup.timer = setInterval(async () => {
+      if (!supOpenNow() || sup.view !== 'thread') return stopSupTimer();
+      if (ws.open) return;
+      try { drawThread((await api('/tickets/' + sup.id)).ticket); } catch { /* повторим */ }
     }, 6000);
   }
 
+  /* ---------- 9c. WebSocket: всё обновляется сразу ---------- */
+  const ws = { sock: null, open: false, retry: 0, timer: null, id: null, ready: false, wasDown: false };
+  let catalogTimer = null;
+
+  function wsConnect() {
+    clearTimeout(ws.timer);
+    if (ws.sock) { ws.sock.onclose = null; try { ws.sock.close(); } catch { /* ignore */ } }
+    ws.open = false;
+    let s;
+    try { s = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws'); } catch { return; }
+    ws.sock = s;
+    s.onopen = () => { ws.open = true; ws.retry = 0; if (ws.wasDown) { ws.wasDown = false; wsResync(); } };
+    s.onmessage = e => { try { onWs(JSON.parse(e.data)); } catch { /* битое сообщение */ } };
+    s.onclose = () => {
+      if (ws.sock !== s) return;
+      ws.open = false; ws.wasDown = true;
+      ws.timer = setTimeout(wsConnect, Math.min(15000, 1000 * 2 ** ws.retry++));
+    };
+  }
+  function wsEnsure() {
+    const id = state.user ? state.user.username : '';
+    if (ws.sock && ws.id === id) return;
+    ws.id = id; ws.retry = 0; ws.wasDown = false; wsConnect();
+  }
+  function refreshCatalogSoon() {
+    clearTimeout(catalogTimer);
+    catalogTimer = setTimeout(() => { loadItems().then(() => { refreshCatalog(); renderCart(); }).catch(() => {}); }, 300);
+  }
+  async function wsResync() {                       // после обрыва связи: догоняем то, что пропустили
+    refreshCatalogSoon();
+    if (supOpenNow() && state.user) {
+      if (sup.view === 'thread' && sup.id) { try { drawThread((await api('/tickets/' + sup.id)).ticket); } catch { /* ignore */ } }
+      else if (sup.view === 'list') renderSupport();
+    }
+    if (state.payOrderId && $('#checkoutDlg').open) { try { onOrderUpdate((await api('/orders/' + state.payOrderId)).order); } catch { /* ignore */ } }
+    if ($('#profileDlg').open && state.user) loadProfileOrders();
+  }
+  function onWs(m) {
+    if (m.t === 'ticket' && m.ticket) {
+      const k = m.ticket, last = k.messages[k.messages.length - 1];
+      const viewing = supOpenNow() && sup.view === 'thread' && sup.id === k.id;
+      if (viewing) drawThread(k);
+      else if (supOpenNow() && sup.view === 'list') renderSupport();
+      if (!viewing && last && last.from === 'admin') toast(t('sup.newReply'));
+    } else if (m.t === 'order' && m.order) {
+      if ($('#checkoutDlg').open && state.payOrderId === m.order.id) onOrderUpdate(m.order);
+      if ($('#profileDlg').open) loadProfileOrders();
+    } else if (m.t === 'catalog') refreshCatalogSoon();
+  }
 
   /* ---------- 10. Плейсхолдер ---------- */
   function startPlaceholderTyping(input) {
@@ -807,6 +917,7 @@
     renderAll();
     await Promise.all([loadItems().catch(() => {}), loadMe()]);
     renderAll();
+    ws.ready = true; wsEnsure();
     startPlaceholderTyping($('#heroInput'));
   }
 

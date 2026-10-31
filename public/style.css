@@ -426,6 +426,7 @@ dialog::backdrop { background: rgb(0 0 0 / .78); -webkit-backdrop-filter: blur(4
 .msg { max-width: 88%; padding: 10px 13px; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); }
 .msg b { display: block; margin-bottom: 3px; font-size: .76rem; font-weight: 600; color: var(--faint); }
 .msg p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: .94rem; }
+.sup-closed { margin: 0 0 12px; padding: 12px 14px; border: 1px dashed var(--line); border-radius: var(--r); }
 .msg--user { justify-self: end; background: var(--blue-soft); border-color: rgb(61 107 220 / .35); }
 
 /* ---------- 12. Админ-панель ---------- */
