@@ -1,0 +1,9 @@
+[
+  { "id": 1, "h": "adst", "price": 30, "cat": "4l", "secret": "login: adst@example.test\npass: TEST-adst-0001" },
+  { "id": 2, "h": "husa", "price": 30, "cat": "4l", "secret": "login: husa@example.test\npass: TEST-husa-0002" },
+  { "id": 3, "h": "nthg", "price": 30, "cat": "4l", "secret": "login: nthg@example.test\npass: TEST-nthg-0003" },
+  { "id": 4, "h": "jagw", "price": 30, "cat": "4l", "secret": "login: jagw@example.test\npass: TEST-jagw-0004" },
+  { "id": 5, "h": "aw3v", "price": 20, "cat": "4c", "secret": "login: aw3v@example.test\npass: TEST-aw3v-0005" },
+  { "id": 6, "h": "bia1", "price": 20, "cat": "4c", "secret": "login: bia1@example.test\npass: TEST-bia1-0006" },
+  { "id": 7, "h": "s8g1", "price": 20, "cat": "4c", "secret": "login: s8g1@example.test\npass: TEST-s8g1-0007" }
+]

@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sniper | магазин ников</title>
+  <meta name="description" content="Sniper — магазин редких Discord-ников. 4L и 4C.">
+  <meta property="og:title" content="Sniper — магазин Discord-ников">
+  <meta property="og:description" content="Редкие 4L и 4C ники. Оплата криптой.">
+  <meta property="og:type" content="website">
+  <meta name="theme-color" content="#05070c">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2305070c'/%3E%3Ccircle cx='16' cy='16' r='8' fill='none' stroke='%232f6bff' stroke-width='2.5'/%3E%3Cpath d='M16 3v8M16 21v8M3 16h8M21 16h8' stroke='%232f6bff' stroke-width='2.5'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap header-in">
+    <a class="brand" href="#top" aria-label="Sniper">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">Sniper</span>
+    </a>
+
+    <div class="tools">
+      <button class="tool tool--text" id="langBtn" type="button" data-i18n-aria="a.lang" aria-label="Сменить язык">EN</button>
+      <button class="tool tool--user" id="userBtn" type="button" data-i18n-aria="a.user" aria-label="Аккаунт">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+        <span class="user-label" id="userLabel" data-i18n="auth.signin">Войти</span>
+      </button>
+      <button class="tool tool--cart" id="cartBtn" type="button" data-i18n-aria="a.cart" aria-label="Открыть корзину">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h2.5l2.2 10.2a1 1 0 0 0 1 .8h8.6a1 1 0 0 0 1-.8L20 8H6.2"/><circle cx="9.5" cy="19.5" r="1.3"/><circle cx="17" cy="19.5" r="1.3"/></svg>
+        <span class="badge" id="cartCount" hidden>0</span>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main id="top">
+
+  <section class="hero">
+
+    <div class="wrap hero-in">
+      <p class="eyebrow" data-i18n="hero.eyebrow">Магазин Discord-ников</p>
+      <h1>Sniper</h1>
+      <p class="hero-sub" data-i18n="hero.sub">Редкие короткие ники. Всё видно сразу, оплата криптой.</p>
+
+      <form class="finder" id="finder" role="search" autocomplete="off">
+        <label class="sr-only" for="heroInput" data-i18n="hero.label">Найти ник</label>
+        <span class="finder-at" aria-hidden="true">@</span>
+        <input id="heroInput" type="text" maxlength="32" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" placeholder="">
+        <button class="btn btn--primary finder-go" type="submit" data-i18n="hero.browse">Смотреть</button>
+      </form>
+      <p class="finder-status" id="finderStatus" aria-live="polite"></p>
+    </div>
+  </section>
+
+  <section class="section" id="catalog">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 data-i18n="cat.title">Каталог</h2>
+        <div class="tabs" id="tabs" role="group" aria-label="Категория"></div>
+      </div>
+
+      <div class="results-bar">
+        <p id="resultsText"></p>
+        <button class="link-btn" id="resetBtn" type="button" hidden data-i18n="cat.reset">Сбросить</button>
+      </div>
+
+      <div class="grid" id="grid"></div>
+
+      <div class="empty" id="empty" hidden>
+        <h3 data-i18n="empty.title">Ничего не найдено</h3>
+        <p data-i18n="empty.text">Попробуйте другой запрос или напишите нам.</p>
+        <div class="empty-actions">
+          <button class="btn btn--sm" type="button" id="emptyReset" data-i18n="cat.reset">Сбросить</button>
+          <a class="btn btn--primary btn--sm" href="#contact" data-i18n="empty.cta">Связаться</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section section--thin" id="contact">
+    <div class="wrap">
+      <div class="contact">
+        <div>
+          <h2 data-i18n="contact.title">Нужен другой ник?</h2>
+          <p data-i18n="contact.text">Напишите, какой ник ищете, и мы постараемся найти.</p>
+        </div>
+        <div class="contact-links">
+          <a class="btn btn--primary" id="tgLink" href="https://t.me/your_support" target="_blank" rel="noopener" data-i18n="contact.tg">Telegram</a>
+          <a class="btn" id="mailLink" href="mailto:hello@example.com" data-i18n="contact.mail">Email</a>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-in">
+    <a class="brand" href="#top" aria-label="Sniper">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">Sniper</span>
+    </a>
+    <p>© Sniper</p>
+  </div>
+</footer>
+
+<!-- Корзина -->
+<dialog id="cartDrawer" class="drawer" aria-labelledby="cartTitle">
+  <div class="dlg">
+    <header class="dlg-head">
+      <h2 id="cartTitle" data-i18n="cart.title">Корзина</h2>
+      <button class="close" type="button" data-close data-i18n-aria="common.close" aria-label="Закрыть">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </header>
+    <div class="dlg-body" id="cartBody"></div>
+    <footer class="dlg-foot" id="cartFoot"></footer>
+  </div>
+</dialog>
+
+<!-- Вход / регистрация -->
+<dialog id="authDlg" class="modal modal--sm" aria-labelledby="authTitle">
+  <div class="dlg">
+    <header class="dlg-head">
+      <h2 id="authTitle" data-i18n="auth.title">Аккаунт</h2>
+      <button class="close" type="button" data-close data-i18n-aria="common.close" aria-label="Закрыть">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </header>
+
+    <div class="dlg-body">
+      <p class="auth-note" id="authNote" hidden data-i18n="auth.need">Чтобы купить ник, создайте аккаунт. Это быстро.</p>
+
+      <div class="auth-tabs" role="tablist">
+        <button type="button" class="auth-tab" data-auth-tab="register" role="tab" data-i18n="auth.register">Регистрация</button>
+        <button type="button" class="auth-tab" data-auth-tab="login" role="tab" data-i18n="auth.login">Вход</button>
+      </div>
+
+      <form id="authForm" novalidate autocomplete="on">
+        <div class="field" data-only="register">
+          <label for="auName" data-i18n="auth.username">Имя пользователя</label>
+          <input id="auName" name="username" type="text" maxlength="20" autocomplete="username" spellcheck="false" autocapitalize="off">
+          <p class="err" id="errName" role="alert" hidden></p>
+        </div>
+        <div class="field" data-only="login">
+          <label for="auId" data-i18n="auth.id">Имя пользователя</label>
+          <input id="auId" name="id" type="text" maxlength="20" autocomplete="username" spellcheck="false" autocapitalize="off">
+          <p class="err" id="errId" role="alert" hidden></p>
+        </div>
+        <div class="field">
+          <label for="auPass" data-i18n="auth.password">Пароль</label>
+          <input id="auPass" name="password" type="password" maxlength="72" autocomplete="current-password">
+          <p class="err" id="errPass" role="alert" hidden></p>
+        </div>
+        <div class="field" data-only="register">
+          <label for="auPass2" data-i18n="auth.password2">Повторите пароль</label>
+          <input id="auPass2" name="password2" type="password" maxlength="72" autocomplete="new-password">
+          <p class="err" id="errPass2" role="alert" hidden></p>
+        </div>
+        <p class="err" id="errAuth" role="alert" hidden></p>
+        <button class="btn btn--primary auth-submit" type="submit" id="authSubmit"></button>
+      </form>
+    </div>
+  </div>
+</dialog>
+
+<!-- Профиль -->
+<dialog id="profileDlg" class="modal modal--sm" aria-labelledby="profTitle">
+  <div class="dlg">
+    <header class="dlg-head">
+      <h2 id="profTitle" data-i18n="prof.title">Профиль</h2>
+      <button class="close" type="button" data-close data-i18n-aria="common.close" aria-label="Закрыть">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </header>
+    <div class="dlg-body">
+      <div class="prof">
+        <span class="ava" id="profAva" aria-hidden="true"></span>
+        <div>
+          <strong id="profName"></strong>
+        </div>
+      </div>
+      <h3 class="mini-title" data-i18n="ord.title">Мои заказы</h3>
+      <div class="orders" id="profOrders"></div>
+      <button class="btn auth-submit" type="button" id="logoutBtn" data-i18n="prof.logout">Выйти</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- Оформление -->
+<dialog id="checkoutDlg" class="modal" aria-labelledby="coTitle">
+  <div class="dlg">
+    <header class="dlg-head">
+      <h2 id="coTitle" data-i18n="co.title">Оформление</h2>
+      <button class="close" type="button" data-close data-i18n-aria="common.close" aria-label="Закрыть">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </header>
+
+    <form class="dlg-body" id="coForm" novalidate>
+      <h3 class="mini-title" data-i18n="co.summary">Ваш заказ</h3>
+      <ul class="summary" id="coSummary"></ul>
+
+      <fieldset class="field pay">
+        <legend data-i18n="co.pay">Оплата</legend>
+        <div class="pay-grid" id="payGrid"></div>
+      </fieldset>
+
+      <label class="check">
+        <input type="checkbox" id="coTerms" name="terms">
+        <span data-i18n="co.terms">Я согласен с условиями. Данные ника отправляются после подтверждения оплаты.</span>
+      </label>
+      <p class="err" id="coErrTerms" role="alert" hidden data-i18n="co.errTerms">Примите условия, чтобы продолжить.</p>
+      <p class="err" id="coErrSend" role="alert" hidden data-i18n="co.errSend">Не удалось отправить заказ. Попробуйте ещё раз.</p>
+
+      <div class="co-foot">
+        <div class="co-total"><span data-i18n="cart.total">Итого</span><strong id="coTotal">$0</strong></div>
+        <button class="btn btn--primary" type="submit" id="coSubmit" data-i18n="co.submit">Оформить</button>
+      </div>
+    </form>
+
+    <div class="dlg-body pay-box" id="coPay" hidden></div>
+
+    <div class="dlg-body done" id="coDone" hidden>
+      <span class="done-mark" aria-hidden="true">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+      </span>
+      <h3 data-i18n="ok.title">Заказ принят</h3>
+      <p id="coDoneText"></p>
+      <div class="orders" id="coDelivery"></div>
+      <button class="btn btn--primary" type="button" data-close data-i18n="ok.close">В каталог</button>
+    </div>
+  </div>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<noscript><p class="noscript">Включите JavaScript, чтобы увидеть каталог.</p></noscript>
+
+<script src="app.js"></script>
+</body>
+</html>
