@@ -83,7 +83,7 @@
     shell(`
       <section class="adm-card">
         <h2>Добавить ники</h2>
-        <p class="muted-text">По одному в строке: <code>ник | данные для выдачи</code>. Несколько строк данных в одной записи разделяй через <code>;;</code>.</p>
+        <p class="muted-text">По одному в строке: <code>ник | данные для выдачи</code>. Несколько строк данных в одной записи разделяй через <code>;;</code>. Данные можно не указывать: ник попадёт в каталог, а данные ты впишешь, когда придёт заказ.</p>
         <form id="addForm" novalidate>
           <div class="adm-row2">
             <div class="field"><label for="aCat">Категория</label>
@@ -91,7 +91,7 @@
             <div class="field"><label for="aPrice">Цена, $</label><input id="aPrice" type="text" inputmode="numeric" value="30" autocomplete="off"></div>
           </div>
           <div class="field"><label for="aLines">Ники</label>
-            <textarea id="aLines" rows="5" spellcheck="false" placeholder="abcd | login: mail@x.com;;pass: 12345"></textarea></div>
+            <textarea id="aLines" rows="5" spellcheck="false" placeholder="abcd | login: mail@x.com;;pass: 12345&#10;efgh   ← можно без данных, впишешь при заказе"></textarea></div>
           <button class="btn btn--primary" type="submit">Добавить в сток</button>
         </form>
       </section>
@@ -105,7 +105,7 @@
             <span class="tag">${i.cat.toUpperCase()}</span>
             <input class="adm-price" type="text" inputmode="numeric" value="${i.price}" aria-label="Цена @${esc(i.h)}">
             <span class="status status--${i.status === 'sold' ? 'delivered' : i.status === 'reserved' ? 'pending' : ''}">${STATUS[i.status]}</span>
-            <details class="adm-det"><summary>данные</summary><pre>${esc(i.secret)}</pre></details>
+            ${i.secret ? `<details class="adm-det"><summary>данные</summary><pre>${esc(i.secret)}</pre></details>` : '<span class="tag tag--warn">нет данных</span>'}
             <button class="btn btn--sm" type="button" data-del="${i.id}" ${i.status !== 'free' ? 'disabled' : ''}>Удалить</button>
           </div>`).join('') : '<p class="muted-text">Пусто.</p>'}</div>
       </section>`);
@@ -135,31 +135,53 @@
   async function loadOrders() {
     const [{ orders }, st] = await Promise.all([api('/admin/orders'), api('/admin/stock')]);
     state.stats = st.stats;
-    const row = o => `
-      <div class="adm-line adm-line--o ${o.status === 'review' ? 'adm-line--review' : ''}">
-        <strong>${esc(o.id)}</strong><span>${esc(o.username)}</span>
-        <span class="adm-items">${o.items.map(h => '<span class="at">@</span>' + esc(h)).join(', ')}</span>
-        <span>${money(o.total)} · ${esc(o.method.toUpperCase())}</span>
-        <span class="status status--${o.status}">${ORDER_S[o.status]}</span><small class="muted-text">${fmt(o.claimedAt || o.createdAt)}</small>
-        ${o.status === 'review' || o.status === 'pending' ? `<span class="adm-actions">
-          <button class="btn btn--primary btn--sm" type="button" data-ok="${esc(o.id)}">Деньги пришли — выдать</button>
-          <button class="btn btn--sm" type="button" data-no="${esc(o.id)}">Отклонить</button></span>` : ''}
+    const itemsOf = o => o.items.map(i => '<span class="at">@</span>' + esc(i.h)).join(', ');
+    const row = o => {
+      const open = o.status === 'review' || o.status === 'pending';
+      return `
+      <div class="adm-order ${o.status === 'review' ? 'adm-line--review' : ''}" data-oid="${esc(o.id)}">
+        <div class="adm-order-top">
+          <strong>${esc(o.id)}</strong><span>${esc(o.username)}</span>
+          <span class="adm-items">${itemsOf(o)}</span>
+          <span>${money(o.total)} · ${esc(o.method.toUpperCase())}</span>
+          <span class="status status--${o.status}">${ORDER_S[o.status]}</span><small class="muted-text">${fmt(o.claimedAt || o.createdAt)}</small>
+        </div>
+        ${open ? `<div class="adm-deliver">
+          ${o.items.map(i => `<div class="adm-dl">
+            <label><span class="at">@</span>${esc(i.h)} <button class="btn btn--sm" type="button" data-copy="${esc(i.h)}">копировать ник</button></label>
+            <textarea rows="2" spellcheck="false" data-dl="${i.id}" placeholder="данные выдачи: login: ...;;pass: ...">${esc(i.secret.replace(/\n/g, ';;'))}</textarea></div>`).join('')}
+          <div class="adm-actions">
+            <button class="btn btn--primary btn--sm" type="button" data-ok="${esc(o.id)}">Деньги пришли — выдать</button>
+            <button class="btn btn--sm" type="button" data-no="${esc(o.id)}">Отклонить</button></div>
+        </div>` : ''}
       </div>`;
+    };
     const review = orders.filter(o => o.status === 'review'), rest = orders.filter(o => o.status !== 'review');
     shell(`
       <section class="adm-card"><h2>Ждут проверки оплаты <span class="muted-text">${review.length}</span></h2>
         <p class="muted-text">Клиент нажал «оплатил». Проверь, что деньги пришли, и подтверди — только тогда он получит данные.</p>
         <div class="adm-table">${review.length ? review.map(row).join('') : '<p class="muted-text">Новых заявок нет.</p>'}</div></section>
       <section class="adm-card"><h2>Все заказы</h2><div class="adm-table">${rest.length ? rest.map(row).join('') : '<p class="muted-text">Заказов пока нет.</p>'}</div></section>`);
-    const act = (attr, path, ask) => $$('[' + attr + ']').forEach(b => b.addEventListener('click', async () => {
-      if (!confirm(ask)) return;
+    $$('[data-copy]').forEach(b => b.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(b.dataset.copy); toast('Скопировано: ' + b.dataset.copy); } catch { toast('Не удалось скопировать'); }
+    }));
+    $$('[data-no]').forEach(b => b.addEventListener('click', async () => {
+      if (!confirm('Отклонить заказ? Ники вернутся в каталог.')) return;
       b.disabled = true;
-      try { await api('/admin/orders/' + b.getAttribute(attr) + '/' + path, 'POST', {}); toast(path === 'confirm' ? 'Заказ выдан клиенту' : 'Заказ отклонён'); }
+      try { await api('/admin/orders/' + b.dataset.no + '/reject', 'POST', {}); toast('Заказ отклонён'); }
       catch { toast('Не получилось (статус уже изменился?)'); }
       loadOrders();
     }));
-    act('data-ok', 'confirm', 'Деньги точно пришли? Клиент сразу получит данные.');
-    act('data-no', 'reject', 'Отклонить заказ? Ники вернутся в каталог.');
+    $$('[data-ok]').forEach(b => b.addEventListener('click', async () => {
+      const card = b.closest('.adm-order'), data = {};
+      $$('[data-dl]', card).forEach(t => { data[t.dataset.dl] = t.value; });
+      if ($$('[data-dl]', card).some(t => !t.value.trim())) { toast('Впиши данные выдачи для каждого ника'); return; }
+      if (!confirm('Деньги точно пришли? Клиент сразу получит эти данные.')) return;
+      b.disabled = true;
+      try { await api('/admin/orders/' + b.dataset.ok + '/confirm', 'POST', { data }); toast('Заказ выдан клиенту'); }
+      catch (ex) { toast(ex.code === 'need_data' ? 'Нет данных выдачи' : ex.code === 'validation' ? 'Данные слишком длинные (до 500 символов)' : 'Не получилось (статус уже изменился?)'); }
+      loadOrders();
+    }));
   }
 
   /* ---------- поддержка ---------- */

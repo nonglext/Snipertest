@@ -314,7 +314,7 @@ function adminApi(req, res, url, body, adminName) {
     for (const line of lines) {
       const i = line.indexOf('|');
       const h = (i < 0 ? line : line.slice(0, i)).trim().toLowerCase(), secret = i < 0 ? '' : line.slice(i + 1).trim();
-      if (!/^[a-z0-9_.]{2,32}$/.test(h) || !secret || secret.length > 500) { skipped.push(h || line.slice(0, 20) + ' (формат)'); continue; }
+      if (!/^[a-z0-9_.]{2,32}$/.test(h) || secret.length > 500) { skipped.push(h || line.slice(0, 20) + ' (формат)'); continue; }
       if (have.has(h)) { skipped.push(h + ' (уже есть)'); continue; }
       have.add(h);
       db.stock.push({ id: nextStockId(), h, price, cat, secret: secret.replace(/\s*;;\s*/g, '\n') });
@@ -345,7 +345,7 @@ function adminApi(req, res, url, body, adminName) {
     const list = db.orders.slice().sort((a, b) => b.createdAt - a.createdAt).slice(0, 200).map(o => ({
       id: o.id, status: o.status, total: o.total, method: o.method, createdAt: o.createdAt, claimedAt: o.claimedAt, address: o.address,
       username: (db.users.find(u => u.id === o.userId) || {}).username || '?',
-      items: o.items.map(id => (getStock(id) || {}).h || '?')
+      items: o.items.map(id => { const x = getStock(id) || {}; return { id, h: x.h || '?', secret: x.secret || '' }; })
     }));
     return send(res, 200, { orders: list });
   }
@@ -358,6 +358,18 @@ function adminApi(req, res, url, body, adminName) {
     if (om[2] === 'confirm') {
       if (order.status === 'delivered') return send(res, 200, { ok: true, status: order.status });
       if (order.status !== 'review' && order.status !== 'pending') return fail(res, 409, 'bad status', 'status');
+      // данные выдачи можно вписать прямо при подтверждении (купил у другого поставщика → вставил сюда)
+      const given = body.data && typeof body.data === 'object' ? body.data : {};
+      const next = {}, missing = [];
+      for (const id of order.items) {
+        const item = getStock(id);
+        const raw = given[id] !== undefined ? String(given[id]).trim().replace(/\s*;;\s*/g, '\n') : item.secret;
+        if (!raw) { missing.push(item.h); continue; }
+        if (raw.length > 500) return fail(res, 400, 'data too long', 'validation');
+        next[id] = raw;
+      }
+      if (missing.length) return send(res, 400, { error: 'нет данных выдачи', code: 'need_data', missing });
+      for (const id of order.items) getStock(id).secret = next[id];
       markPaid(order, adminName);
     } else {
       if (order.status !== 'review' && order.status !== 'pending') return fail(res, 409, 'bad status', 'status');

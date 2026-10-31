@@ -399,6 +399,14 @@ dialog::backdrop { background: rgb(0 0 0 / .78); -webkit-backdrop-filter: blur(4
 .status--review { color: #f5b942; }
 .adm-line--review { border-color: rgba(245,185,66,.45); }
 .adm-actions { display: flex; gap: 8px; }
+.adm-order { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.adm-order:last-child { border-bottom: 0; }
+.adm-order-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.adm-order-top .adm-items { flex: 1 1 200px; }
+.adm-deliver { display: grid; gap: 10px; margin-top: 10px; padding: 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); }
+.adm-dl label { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; font-weight: 600; }
+.adm-dl textarea { width: 100%; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .85rem; }
+.tag--warn { color: #f5b942; }
 .adm-badge { display: inline-block; margin-left: 6px; padding: 0 7px; border-radius: 999px; background: #f5b942; color: #111; font-size: 12px; font-weight: 700; }
 .order-data { margin-top: 10px; }
 .order-data summary { cursor: pointer; font-size: .86rem; font-weight: 500; color: var(--blue-hi); }
