@@ -7,8 +7,7 @@
 
   /* ---------- 1. CONFIG ---------- */
   const CONFIG = {
-    telegram: 'https://t.me/your_support',   // ваша ссылка на Telegram
-    email: 'hello@example.com'               // ваша почта
+    telegram: 'https://t.me/your_support'    // ВПИШИ СВОЮ ссылку на Telegram
   };
 
   /* ---------- 2. КАТАЛОГ ----------
@@ -16,6 +15,7 @@
   let ITEMS = [];
   const CATS = ['4l', '4c'];
 
+  const CRYPTO_ENABLED = false;   // крипта выключена; true вернёт USDT/TON (и на сервере CRYPTO_ENABLED=1)
   const PAYMENT_METHODS = [
     { id: 'usdt', key: 'pay.usdt', sub: 'TRC-20 / ERC-20' },
     { id: 'ton',  key: 'pay.ton',  sub: 'Toncoin' },
@@ -27,7 +27,7 @@
     ru: {
       'a.cart': 'Открыть корзину', 'a.lang': 'Сменить язык', 'a.user': 'Аккаунт', 'common.close': 'Закрыть',
       'hero.eyebrow': 'Магазин Discord-ников',
-      'hero.sub': 'Редкие короткие ники. Всё видно сразу, оплата криптой.',
+      'hero.sub': 'Редкие короткие ники. Всё видно сразу, оплата через FunPay.',
       'hero.label': 'Найти ник', 'hero.browse': 'Смотреть',
       'hero.idle': 'В наличии: {n}. Введите ник, чтобы проверить.',
       'hero.match': 'Найдено по «{q}»: {n}',
@@ -86,7 +86,7 @@
       'co.errSend': 'Не удалось отправить заказ. Попробуйте ещё раз.',
       'pay.usdt': 'USDT', 'pay.ton': 'TON', 'pay.funpay': 'FunPay',
       'pay.fpHint': 'Откройте лот, оплатите его на FunPay и подтвердите заказ там. Потом вернитесь сюда и нажмите «Я оплатил». Админ проверит оплату и выдаст данные.',
-      'pay.fpRef': 'Номер заказа на FunPay (необязательно)', 'pay.fpDone': 'Я оплатил на FunPay', 'pay.fpOpen': 'Открыть лот',
+      'pay.fpRef': 'Номер заказа на FunPay (необязательно)', 'pay.fpDone': 'Я оплатил на FunPay', 'pay.fpOpen': 'Открыть лот', 'pay.noFp': 'Для этого ника пока нет лота на FunPay. Напишите в поддержку, и мы поможем оформить заказ.',
       'ok.title': 'Заказ выдан', 'ok.text': 'Заказ {id} оплачен.', 'ok.close': 'В каталог',
       'contact.title': 'Нужен другой ник?', 'contact.text': 'Напишите, какой ник ищете, и мы постараемся найти.',
       'contact.tg': 'Telegram', 'contact.mail': 'Email'
@@ -94,7 +94,7 @@
     en: {
       'a.cart': 'Open cart', 'a.lang': 'Switch language', 'a.user': 'Account', 'common.close': 'Close',
       'hero.eyebrow': 'Discord username shop',
-      'hero.sub': 'Rare short usernames. Everything visible upfront, pay in crypto.',
+      'hero.sub': 'Rare short usernames. Everything visible upfront, pay via FunPay.',
       'hero.label': 'Find a username', 'hero.browse': 'Browse',
       'hero.idle': '{n} in stock. Type one to check it.',
       'hero.match': 'Matches for “{q}”: {n}',
@@ -153,7 +153,7 @@
       'co.errSend': 'Could not send the order. Please try again.',
       'pay.usdt': 'USDT', 'pay.ton': 'TON', 'pay.funpay': 'FunPay',
       'pay.fpHint': 'Open the listing, pay for it on FunPay and confirm the order there. Then come back here and press “I paid”. The admin will check the payment and send your details.',
-      'pay.fpRef': 'FunPay order number (optional)', 'pay.fpDone': 'I paid on FunPay', 'pay.fpOpen': 'Open listing',
+      'pay.fpRef': 'FunPay order number (optional)', 'pay.fpDone': 'I paid on FunPay', 'pay.fpOpen': 'Open listing', 'pay.noFp': 'There is no FunPay listing for this username yet. Contact support and we will help you place the order.',
       'ok.title': 'Order delivered', 'ok.text': 'Order {id} is paid.', 'ok.close': 'Back to catalog',
       'contact.title': 'Need a different username?', 'contact.text': 'Tell us what you are looking for and we will try to find it.',
       'contact.tg': 'Telegram', 'contact.mail': 'Email'
@@ -520,7 +520,13 @@
   }
 
   function renderPayMethods() {
-    const list = PAYMENT_METHODS.filter(m => !m.fp || (state.checkout && state.checkout.items.length && state.checkout.items.every(i => i.fp)));
+    const list = PAYMENT_METHODS.filter(m => (m.fp || CRYPTO_ENABLED) && (!m.fp || (state.checkout && state.checkout.items.length && state.checkout.items.every(i => i.fp))));
+    if (!list.length) {      // у какого-то ника нет лота FunPay, а крипта выключена
+      $('#payGrid').innerHTML = `<p class="muted-text">${t('pay.noFp')}</p>`;
+      $('#coSubmit').disabled = true;
+      return;
+    }
+    $('#coSubmit').disabled = false;
     const checked = ($('input[name="method"]:checked') || {}).value;
     const cur = list.some(m => m.id === checked) ? checked : list[0].id;
     $('#payGrid').innerHTML = list.map(m => `
@@ -635,6 +641,7 @@
     errTerms.hidden = okTerms;
     if (!okTerms) { form.terms.focus(); return; }
 
+    if (!form.elements.method) return;      // нет доступного способа оплаты
     const btn = $('#coSubmit');
     btn.disabled = true; btn.textContent = t('co.sending');
 

@@ -9,6 +9,7 @@ const { promisify } = require('util');
 const scrypt = promisify(crypto.scrypt);
 
 const PORT = Number(process.env.PORT) || 3000;
+const CRYPTO_ENABLED = process.env.CRYPTO_ENABLED === '1';   // крипта выключена; включить: CRYPTO_ENABLED=1
 const PAYMENT_MODE = process.env.PAYMENT_MODE === 'live' ? 'live' : 'test';
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const ORDER_TTL = 30 * 60 * 1000;
@@ -16,8 +17,8 @@ const SESSION_TTL = 30 * 24 * 3600 * 1000;
 const PUBLIC = path.join(__dirname, 'public');
 
 /* ---------- склад (секретные данные только тут, в браузер не уходят) ---------- */
-const stockFile = fs.existsSync(path.join(__dirname, 'stock.json')) ? 'stock.json' : 'stock.example.json';
-const SEED = JSON.parse(fs.readFileSync(path.join(__dirname, stockFile), 'utf8'));
+// на чистой базе сток пустой (тестовые ники из stock.example.json больше не подмешиваются); стартовые позиции только из stock.json
+const SEED = fs.existsSync(path.join(__dirname, 'stock.json')) ? JSON.parse(fs.readFileSync(path.join(__dirname, 'stock.json'), 'utf8')) : [];
 
 /* ---------- БД: Postgres (если задан DATABASE_URL) или JSON-файл ---------- */
 const DATABASE_URL = process.env.DATABASE_URL || '';
@@ -474,7 +475,7 @@ async function api(req, res, url) {
   if (route === 'POST /api/orders') {
     if (limited(ip, 'order', 20, 3600e3)) return fail(res, 429, 'too many', 'rate');
     const ids = Array.isArray(body.items) ? [...new Set(body.items.map(Number))] : [];
-    const method = ['usdt', 'ton', 'funpay'].includes(body.method) ? body.method : null;
+    const method = (CRYPTO_ENABLED ? ['usdt', 'ton', 'funpay'] : ['funpay']).includes(body.method) ? body.method : null;
     if (!ids.length || ids.length > 10 || !method || ids.some(id => !getStock(id) || getStock(id).removed)) return fail(res, 400, 'bad order', 'validation');
     // свои прошлые неоплаченные заказы отменяем, чтобы не держать бронь
     db.orders.forEach(o => { if (o.userId === user.id && o.status === 'pending') { o.status = 'expired'; pushOrder(o); } });
