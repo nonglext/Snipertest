@@ -7,7 +7,7 @@
 
   /* ---------- 1. CONFIG ---------- */
   const CONFIG = {
-    telegram: 'https://t.me/your_support'    // ВПИШИ СВОЮ ссылку на Telegram
+    telegram: 'https://t.me/asdasfafas2'    // ВПИШИ СВОЮ ссылку на Telegram
   };
 
   /* ---------- 2. КАТАЛОГ ----------
