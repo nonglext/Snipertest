@@ -933,7 +933,6 @@
 
   async function init() {
     $('#tgLink').href = CONFIG.telegram;
-    $('#mailLink').href = 'mailto:' + CONFIG.email;
     bind();
     renderAll();
     await Promise.all([loadItems().catch(() => {}), loadMe()]);
