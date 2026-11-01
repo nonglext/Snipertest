@@ -222,7 +222,7 @@ function takenIds(exceptUser) {
   return set;
 }
 function orderView(o, withData) {
-  const items = o.items.map(id => { const s = getStock(id); return { id, h: s.h, price: s.price, cat: s.cat, ...(o.method === 'funpay' && s.fp ? { fp: s.fp } : {}), ...(withData && o.status === 'delivered' ? { data: s.secret } : {}) }; });
+  const items = o.items.map(id => { const s = getStock(id); return { id, h: s.h, price: s.price, cat: s.cat, desc: s.desc || '', ...(o.method === 'funpay' && s.fp ? { fp: s.fp } : {}), ...(withData && o.status === 'delivered' ? { data: s.secret } : {}) }; });
   return {
     id: o.id, status: o.status, method: o.method, total: o.total, address: o.address, ref: o.ref || '',
     createdAt: o.createdAt, expiresAt: o.expiresAt, items, testMode: PAYMENT_MODE === 'test'
@@ -279,6 +279,7 @@ console.log('админов:', ADMINS.size);
 const isAdmin = u => !!u && ADMINS.has(u.username.toLowerCase());
 
 const TEXT_MAX = 2000;
+const DESC_MAX = 300;   // публичное описание ника
 const ticketView = (t, withUser) => ({
   id: t.id, subject: t.subject, status: t.status, createdAt: t.createdAt, updatedAt: t.updatedAt, messages: t.messages,
   ...(withUser ? { username: (db.users.find(u => u.id === t.userId) || {}).username || '?' } : {})
@@ -298,7 +299,7 @@ function adminApi(req, res, url, body, adminName) {
   const route = req.method + ' ' + url.pathname;
 
   if (route === 'GET /api/admin/stock') {
-    const items = db.stock.filter(x => !x.removed).map(x => ({ id: x.id, h: x.h, price: x.price, cat: x.cat, secret: x.secret, fp: x.fp || '', status: stockStatus(x.id) }));
+    const items = db.stock.filter(x => !x.removed).map(x => ({ id: x.id, h: x.h, price: x.price, cat: x.cat, secret: x.secret, fp: x.fp || '', desc: x.desc || '', status: stockStatus(x.id) }));
     const delivered = db.orders.filter(o => o.status === 'delivered');
     return send(res, 200, {
       items,
@@ -315,6 +316,7 @@ function adminApi(req, res, url, body, adminName) {
   if (route === 'POST /api/admin/stock') {          // массовое добавление: строки «ник | данные»
     const cat = body.cat, price = Number(body.price);
     if (!['4l', '4c'].includes(cat) || !Number.isInteger(price) || price < 1 || price > 100000) return fail(res, 400, 'bad price/cat', 'validation');
+    const bulkDesc = String(body.desc || '').trim().slice(0, DESC_MAX);
     const lines = String(body.lines || '').split('\n').map(x => x.trim()).filter(Boolean).slice(0, 200);
     const have = new Set(db.stock.filter(x => !x.removed).map(x => x.h));
     const added = [], skipped = [];
@@ -327,7 +329,7 @@ function adminApi(req, res, url, body, adminName) {
       if (!/^[a-z0-9_.]{2,32}$/.test(h) || secret.length > 500) { skipped.push(h || line.slice(0, 20) + ' (формат)'); continue; }
       if (have.has(h)) { skipped.push(h + ' (уже есть)'); continue; }
       have.add(h);
-      db.stock.push({ id: nextStockId(), h, price, cat, secret: secret.replace(/\s*;;\s*/g, '\n'), ...(fp ? { fp } : {}) });
+      db.stock.push({ id: nextStockId(), h, price, cat, secret: secret.replace(/\s*;;\s*/g, '\n'), ...(fp ? { fp } : {}), ...(bulkDesc ? { desc: bulkDesc } : {}) });
       added.push(h);
     }
     save(); pushAll({ t: 'catalog' });
@@ -346,6 +348,7 @@ function adminApi(req, res, url, body, adminName) {
     if (body.price !== undefined) { const pr = Number(body.price); if (!Number.isInteger(pr) || pr < 1 || pr > 100000) return fail(res, 400, 'price', 'validation'); item.price = pr; }
     if (body.cat !== undefined) { if (!['4l', '4c'].includes(body.cat)) return fail(res, 400, 'cat', 'validation'); item.cat = body.cat; }
     if (body.fp !== undefined) { const f = fpUrl(body.fp); if (f === null) return fail(res, 400, 'fp', 'validation_fp'); if (f) item.fp = f; else delete item.fp; }
+    if (body.desc !== undefined) { const d = String(body.desc).trim(); if (d.length > DESC_MAX) return fail(res, 400, 'desc', 'validation'); if (d) item.desc = d; else delete item.desc; }
     if (body.secret !== undefined) { const sc = String(body.secret).trim(); if (!sc || sc.length > 500) return fail(res, 400, 'secret', 'validation'); item.secret = sc; }
     save(); pushAll({ t: 'catalog' });
     return send(res, 200, { ok: true });
@@ -427,7 +430,7 @@ async function api(req, res, url) {
 
   if (route === 'GET /api/items') {
     const me = userOf(req), taken = takenIds(me && me.id);
-    return send(res, 200, { items: db.stock.filter(s => !s.removed && !taken.has(s.id)).map(({ id, h, price, cat, fp }) => ({ id, h, price, cat, fp: !!fp })) });
+    return send(res, 200, { items: db.stock.filter(s => !s.removed && !taken.has(s.id)).map(({ id, h, price, cat, fp, desc }) => ({ id, h, price, cat, fp: !!fp, desc: desc || '' })) });
   }
 
   if (route === 'GET /api/me') {

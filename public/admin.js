@@ -90,6 +90,8 @@
               <select id="aCat"><option value="4l">4L</option><option value="4c">4C</option></select></div>
             <div class="field"><label for="aPrice">Цена, $</label><input id="aPrice" type="text" inputmode="numeric" value="30" autocomplete="off"></div>
           </div>
+          <div class="field"><label for="aDesc">Описание (необязательно, увидят покупатели; одно на все ники в этой пачке)</label>
+            <input id="aDesc" type="text" maxlength="300" autocomplete="off" placeholder="например: чистый ник, без привязок, 2019 год"></div>
           <div class="field"><label for="aLines">Ники</label>
             <textarea id="aLines" rows="5" spellcheck="false" placeholder="abcd | login: mail@x.com;;pass: 12345 | https://funpay.com/lots/offer?id=123&#10;efgh   ← можно без данных и без ссылки"></textarea></div>
           <button class="btn btn--primary" type="submit">Добавить в сток</button>
@@ -105,6 +107,7 @@
             <span class="tag">${i.cat.toUpperCase()}</span>
             <input class="adm-price" type="text" inputmode="numeric" value="${i.price}" aria-label="Цена @${esc(i.h)}">
             <input class="adm-fp" type="text" spellcheck="false" autocomplete="off" value="${esc(i.fp)}" placeholder="лот FunPay (https://funpay.com/...)" aria-label="Ссылка на лот FunPay @${esc(i.h)}">
+            <input class="adm-desc" type="text" maxlength="300" spellcheck="true" autocomplete="off" value="${esc(i.desc)}" placeholder="описание для покупателей" aria-label="Описание @${esc(i.h)}">
             <span class="status status--${i.status === 'sold' ? 'delivered' : i.status === 'reserved' ? 'pending' : ''}">${STATUS[i.status]}</span>
             ${i.secret ? `<details class="adm-det"><summary>данные</summary><pre>${esc(i.secret)}</pre></details>` : '<span class="tag tag--warn">нет данных</span>'}
             <button class="btn btn--sm" type="button" data-del="${i.id}" ${i.status !== 'free' ? 'disabled' : ''}>Удалить</button>
@@ -114,7 +117,7 @@
     $('#addForm').addEventListener('submit', async e => {
       e.preventDefault();
       try {
-        const r = await api('/admin/stock', 'POST', { cat: $('#aCat').value, price: Number($('#aPrice').value), lines: $('#aLines').value });
+        const r = await api('/admin/stock', 'POST', { cat: $('#aCat').value, price: Number($('#aPrice').value), desc: $('#aDesc').value, lines: $('#aLines').value });
         toast('Добавлено: ' + r.added.length + (r.skipped.length ? '. Пропущено: ' + r.skipped.join(', ') : ''));
         loadStock();
       } catch (ex) { toast(ex.code === 'validation' ? 'Проверь цену (целое число) и категорию.' : 'Ошибка. Попробуй ещё раз.'); }
@@ -124,6 +127,11 @@
       const id = inp.closest('.adm-line').dataset.id;
       try { await api('/admin/stock/' + id, 'POST', { fp: inp.value }); toast(inp.value.trim() ? 'Ссылка на лот сохранена' : 'Ссылка убрана'); }
       catch { toast('Нужна ссылка вида https://funpay.com/...'); loadStock(); }
+    }));
+    $$('.adm-desc').forEach(inp => inp.addEventListener('change', async () => {
+      const id = inp.closest('.adm-line').dataset.id;
+      try { await api('/admin/stock/' + id, 'POST', { desc: inp.value }); toast(inp.value.trim() ? 'Описание сохранено' : 'Описание убрано'); }
+      catch { toast('Описание слишком длинное (до 300 символов)'); loadStock(); }
     }));
     $$('.adm-price').forEach(inp => inp.addEventListener('change', async () => {
       const id = inp.closest('.adm-line').dataset.id;

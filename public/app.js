@@ -227,6 +227,7 @@
       <article class="plate">
         <span class="tag">${t('tab.' + it.cat)}</span>
         <h3 class="plate-handle" aria-label="@${esc(it.h)}">${handleHTML(it)}</h3>
+        ${it.desc ? `<p class="plate-desc">${esc(it.desc)}</p>` : ''}
         <div class="plate-foot">
           <span class="price">${money.format(it.price)}</span>
           <div class="plate-actions">

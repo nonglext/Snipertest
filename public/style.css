@@ -464,8 +464,9 @@ dialog::backdrop { background: rgb(0 0 0 / .78); -webkit-backdrop-filter: blur(4
 .adm-line { display: grid; grid-template-columns: 1.2fr auto 90px 110px 1fr auto; align-items: center; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--line); }
 .adm-line:last-child { border-bottom: 0; }
 .adm-line--o { grid-template-columns: 110px 1fr 1.6fr 130px 120px auto; }
-.adm-line--s { grid-template-columns: 1.1fr auto 80px 1.6fr 100px 100px auto; }
-.adm-fp { min-width: 0; font-size: .82rem; }
+.adm-line--s { grid-template-columns: 1.1fr auto 80px 1.6fr 1.6fr 100px 100px auto; }
+.adm-fp, .adm-desc { min-width: 0; font-size: .82rem; }
+.plate-desc { margin: 8px 0 0; font-size: .85rem; line-height: 1.4; color: var(--muted, #8b94a7); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .adm-nick { font-weight: 700; font-size: 1.05rem; letter-spacing: -.02em; }
 .adm-nick .at, .adm-items .at { color: var(--blue); }
 .adm-price { width: 100%; min-height: 36px; padding: 6px 10px; border: 1px solid var(--line-hi); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; font-size: .92rem; }
